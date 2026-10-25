@@ -24,15 +24,15 @@ INFO = DiscoveredInstrument(
 @pytest.fixture(autouse=True)
 def fake_device() -> Iterator[FakeDP832Resource]:
     res = FakeDP832Resource()
-    server.connections.set_dp832(DP832(res), INFO)
+    server.dp832.set(DP832(res), INFO)
     yield res
-    server.connections.set_dp832(None)
+    server.dp832.set(None)
 
 
 @pytest.fixture
 def fake_discovery(monkeypatch: pytest.MonkeyPatch):
     """Disconnect, and let discovery and pyvisa return fakes."""
-    server.connections.set_dp832(None)
+    server.dp832.set(None)
     found: list[DiscoveredInstrument] = []
     opened: list[FakeDP832Resource] = []
 

@@ -35,7 +35,9 @@ def test_host_of() -> None:
 @pytest.fixture
 def fake_visa(monkeypatch: pytest.MonkeyPatch):
     """Fake VISA layer: addresses per backend and *IDN? results per address."""
-    state = SimpleNamespace(backends=["@py"], addresses={"@py": []}, idn={}, scanned=[], scan_called=False)
+    state = SimpleNamespace(
+        backends=["@py"], addresses={"@py": []}, idn={}, scanned=[], scan_called=False, serial=[]
+    )
     monkeypatch.setattr(discovery, "available_backends", lambda: state.backends)
     monkeypatch.setattr(discovery, "_candidate_addresses", lambda backend: state.addresses.get(backend, []))
     monkeypatch.setattr(discovery, "identify", lambda address, backend: state.idn.get(address))
@@ -45,6 +47,7 @@ def fake_visa(monkeypatch: pytest.MonkeyPatch):
         return state.scanned
 
     monkeypatch.setattr(discovery, "scan_for_scpi_hosts", fake_scan)
+    monkeypatch.setattr(discovery, "discover_serial", lambda skip_ports=(): state.serial)
     return state
 
 
