@@ -106,3 +106,63 @@ def test_identify_hcs_port_cannot_open(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(discovery.SerialTransport, "open", classmethod(fail))
     assert discovery.identify_hcs("COM7") is None
+
+
+def test_discovery_uses_each_protocol_only_on_its_usb_id(monkeypatch):
+    monkeypatch.setattr(discovery.list_ports, "comports", lambda: [
+        _port("COM7", 0x10C4, 0xEA60), _port("COM8", 0x2184, 0x001C),
+        _port("COM9", 0x2184, 0x001C), _port("COM10", 0x2184, 0x9999),
+        _port("COM11", 0x0403, 0x6015),
+    ])
+    probed = []
+
+    def hcs(device, usb_serial=None):
+        probed.append((device, "GMOD"))
+        return inst(device, "HCS1", model="HCS-3404", manufacturer="MANSON")
+
+    def afg(device):
+        probed.append((device, "*IDN?"))
+        return inst(device, "AFG1", model="AFG-2105", manufacturer="GW INSTEK")
+
+    monkeypatch.setattr(discovery, "identify_hcs", hcs)
+    monkeypatch.setattr(discovery, "identify_afg", afg)
+    assert len(discovery.discover_serial(skip_ports=["com9"])) == 2
+    assert probed == [("COM7", "GMOD"), ("COM8", "*IDN?")]
+
+
+@pytest.mark.parametrize("reply,expected", [
+    ("GW INSTEK,AFG-2105,SN:TEST0001,V2.02", "TEST0001"),
+    ("gw instek,afg-2105,TEST0002,V2.02", "TEST0002"),
+    ("GW INSTEK,AFG-2105,SN:,V2.02", None),
+    ("GW INSTEK,AFG-2125,SN:TEST0001,V2.02", None),
+    ("OTHER,AFG-2105,SN:TEST0001,V2.02", None),
+    ("broken reply", None), (TimeoutError("no reply"), None),
+])
+def test_identify_afg_closes_probe_and_normalizes_serial(monkeypatch, reply, expected):
+    class Probe:
+        closed = False
+
+        def query(self, command):
+            assert command == "*IDN?"
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        def close(self):
+            self.closed = True
+
+    probe = Probe()
+    monkeypatch.setattr(discovery.AFGSerialTransport, "open", classmethod(lambda cls, device, timeout: probe))
+    info = discovery.identify_afg("COM8")
+    assert probe.closed
+    assert (info.serial if info else None) == expected
+    if info:
+        assert info.backend == "serial" and info.is_gwinstek and info.is_supported
+
+
+def test_identify_afg_port_cannot_open(monkeypatch):
+    def fail(cls, device, timeout):
+        raise OSError("access denied")
+
+    monkeypatch.setattr(discovery.AFGSerialTransport, "open", classmethod(fail))
+    assert discovery.identify_afg("COM8") is None

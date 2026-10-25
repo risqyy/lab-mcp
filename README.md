@@ -18,6 +18,7 @@ The server finds the instruments automatically. You do not need to configure add
 | Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
 | Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
+| GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); hardware acceptance is separate |
 
 "Tested" means that a test on a real instrument was done with all tools.
 The LAN connection is not tested on a real instrument.
@@ -29,6 +30,12 @@ and with DC voltage from a DP832 (1.5 V to 12.4 V: the difference to the DP832 m
 The test with components, current and AC signals is open (issue #10).
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
+
+The AFG-2105 supports sine, square, ramp/triangle and noise. Arbitrary waveforms, modulation,
+sweep and the frequency counter are not supported by the tools. Other AFG-2000/2100 models
+are not yet supported. The software tests use a simulated instrument. Voltage and frequency
+measurements of the real generator remain in [hardware test #15](https://github.com/risqyy/lab-mcp/issues/15),
+including the AC items of #10.
 
 ## Requirements
 
@@ -146,14 +153,16 @@ The server does these steps:
 5. It sends `*IDN?` to each VISA candidate.
 6. It examines the serial ports of Silicon Labs CP210x USB-serial bridges (USB ID 10C4:EA60).
    It sends `GMOD` to each of these ports. It uses only instruments that identify as HCS.
-   The server does not send data to other serial ports.
+7. It examines GW Instek USB CDC ports (USB ID 2184:001C) with `*IDN?`.
+   It accepts the AFG-2105 and removes the `SN:` prefix from its serial number.
+   The server does not send data to serial ports with other USB IDs.
 
 If an instrument does not answer, the server closes the connection.
 At the next tool call, the server finds the instrument again.
 
 If there is more than one instrument of a type, the server does not select one.
 A command to the wrong instrument can be dangerous. The tools then send an error message with a list of the instruments.
-Use `dp_connect` or `hcs_connect` with the serial number to select one.
+Use `dp_connect`, `hcs_connect`, `dmm_connect` or `sig_connect` with the serial number to select one.
 
 ## Tools
 
@@ -225,12 +234,75 @@ These items were found in a test with a DM3058E (firmware 01.01.00.02.03.01) wit
 | `hcs_presets`            | Read the three preset memories.                                  |
 | `hcs_load_preset`        | Load one preset memory into the setpoints.                       |
 
+### GW Instek AFG-2105 tools
+
+| Tool | Function |
+|------|----------|
+| `sig_connect` | Connect to a generator by serial number or serial port. |
+| `sig_identify` | Show the port, model, serial number and firmware. |
+| `sig_status` | Read the waveform, frequency, amplitude, offset, duty cycle, ramp symmetry, load, output state and limits. |
+| `sig_set` | Set a basic waveform and its parameters. The output state does not change. |
+| `sig_output` | Switch the output on or off, and read the status. |
+
+`sig_set` accepts `waveform` (`sine`, `square`, `ramp`, `noise`), `frequency_hz`,
+`amplitude_vpp`, `offset_v`, `duty_cycle_percent`, `symmetry_percent` and `load`
+(`50_ohm` or `high_z`). Omit a parameter to keep its value. Use `ramp` with
+`symmetry_percent=50` for a triangle. Noise has no frequency setting.
+
+Amplitude is always in Vpp, even if the front panel uses Vrms or dBm. `sig_set` selects
+VPP on the display. `sig_status` only reads the settings and does not change the display unit.
+The reported limits apply to the present settings; for example, more offset means less available amplitude.
+
+The server checks the complete target configuration before it writes settings. It also checks
+the current device limits before each numeric command, reads all settings back, and reads the
+error queue. A communication failure can leave partial settings. Read `sig_status` before continuing.
+
 ## Safety
 
 The server examines each value before it sends the value to the instrument.
 The server does not send values that are out of range.
 
-Rigol DP800 and DP900 series (the server identifies the model with `*IDN?`):
+### GW Instek AFG-2105: limits and load setting
+
+Sine and square: 0.1 Hz to 5 MHz. Ramp: 0.1 Hz to 1 MHz.
+Square-wave duty cycle: 1 % to 99 % below 100 kHz, 20 % to 80 % below 5 MHz.
+At the 5 MHz boundary, the driver uses the narrower 40 % to 60 % range from the manual.
+The driver also checks the limits returned by the instrument.
+
+At 50 Ohm, amplitude is 1 mVpp to 10 Vpp and `abs(offset_v) + amplitude_vpp / 2` must not
+exceed 5 V. The corresponding High-Z values are twice as large. The load setting is a
+reference for voltage values; it does not measure the load or change the internal 50 Ohm impedance.
+If the setting is `50_ohm` but the connected input is high impedance, that input gets twice
+the reported amplitude and offset. Select the correct load before setting the voltage.
+
+Change `load` only with the output off. If amplitude and offset are omitted during a load
+change, their physical values stay the same and their reported values change. To specify new
+values, include them in the same `sig_set` call; they refer to the new load setting.
+
+The driver refuses settings that would cause an implicit frequency or duty-cycle clamp.
+Supply a compatible frequency or duty cycle in the same call. Disable modulation and sweep
+on the front panel before setting a basic waveform or enabling the output. Switching off
+with `sig_output` or `all_outputs_off` does not depend on these modes.
+
+### GW Instek AFG-2105: behavior of the instrument
+
+Protocol checks on firmware V2.02 found these differences and requirements.
+These checks are not a measurement of the output signal.
+The reference is the [AFG-2000 Series User Manual](https://www.gwinstek.com/en-global/products/downloadSeriesDownNew/5374/442).
+
+| Item | Behavior |
+|------|----------|
+| USB | USB CDC, ID 2184:001C. Windows uses its USB Serial Device driver. The baud rate has no effect; the server uses 115200 baud. |
+| Commands | No leading colon. Commands end with LF; replies end with CR LF. |
+| `APPLy` | Also enables the output. The driver does not use it. |
+| Voltage queries | `AMPlitude?` returns Vpp into 50 Ohm, including when the display uses VRMS. `DCOffset?` returns volts into 50 Ohm. MIN/MAX queries use the same reference, also with `OUTPut:LOAD INF`. |
+| Voltage writes | Use the selected load. With High-Z, writing 3.3 Vpp gives a raw amplitude query of 1.65 Vpp. The driver converts both amplitude and offset queries to the selected load. |
+| Out-of-range values | The instrument clamps the value and puts an error in its queue. The driver checks limits and readback instead of accepting this change. |
+| Error queue | `SYST:ERR?` returns one error code, then `No Error`. `*ESR?` and `*STB?` do not reply; the driver does not use them. |
+
+### Rigol DP800 and DP900 series
+
+The server identifies the model with `*IDN?`:
 
 | Model              | Channel  | Voltage   | Current  | OVP max. | OCP max. |
 |--------------------|----------|-----------|----------|----------|----------|
@@ -295,7 +367,8 @@ across a voltage source, the fuse of the multimeter blows. The server cannot det
 | The server does not find a Manson HCS      | Set the MODE switch on the rear panel to "Normal". Make sure that the instrument is on. Make sure that the operating system shows a COM port for the CP210x bridge. If not, install the Silicon Labs CP210x driver. Close other programs that use the port. |
 | The server does not find a Rigol DP        | Close other programs that use the instrument. Then try again. |
 | The server does not find a multimeter      | Install a USB-TMC driver. The DM3058E has no LAN interface. Close other programs that use the instrument. |
-| The server finds more than one instrument  | Use `discover_instruments`. Then use `dp_connect` or `hcs_connect` with the serial number. |
+| The server does not find an AFG-2105 | Connect USB and check for a GW Instek serial port (USB CDC). Do not replace its driver with a USB-TMC driver. Close other programs that use the port. |
+| The server finds more than one instrument  | Use `discover_instruments`. Then use the appropriate `dp_connect`, `hcs_connect`, `dmm_connect` or `sig_connect` tool with the serial number. |
 
 ## Development
 
@@ -319,15 +392,19 @@ src/lab_mcp/
 │   ├── power_supplies/
 │   │   ├── rigol_dp.py        # Rigol DP800 and DP900 series
 │   │   └── manson_hcs.py      # Manson HCS series
-│   └── multimeters/
-│       └── rigol_dm3058.py    # Rigol DM3058 and DM3058E
+│   ├── multimeters/
+│   │   └── rigol_dm3058.py    # Rigol DM3058 and DM3058E
+│   └── signal_generators/
+│       └── gwinstek_afg2000.py # GW Instek AFG-2105
 └── tools/
     ├── power_supplies.py      # dp_* and hcs_* tools
-    └── multimeters.py         # dmm_* tools
+    ├── multimeters.py         # dmm_* tools
+    └── signal_generators.py   # sig_* tools
 tests/
 ├── test_*.py                  # discovery, server and start of the server process
 ├── power_supplies/            # driver tests and simulated instruments
-└── multimeters/
+├── multimeters/
+└── signal_generators/
 ```
 
 ### Add an instrument

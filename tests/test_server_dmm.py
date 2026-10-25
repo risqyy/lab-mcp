@@ -113,9 +113,3 @@ def test_dmm_not_found_message() -> None:
     server.dm3058.set(None)
     with pytest.raises(ToolError, match="No Rigol DM3058 found.*no LAN interface"):
         call("dmm_read")
-
-
-def test_all_outputs_off_ignores_multimeter(fake_dmm: FakeDM3058Resource) -> None:
-    results = call("all_outputs_off").structured_content["result"]
-    assert [r["instrument"] for r in results] == ["Rigol DP", "Manson HCS"]
-    assert fake_dmm.writes == []

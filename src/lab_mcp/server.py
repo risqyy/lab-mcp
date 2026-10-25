@@ -24,6 +24,7 @@ from lab_mcp import discovery
 from lab_mcp.discovery import DiscoveredInstrument
 from lab_mcp.instruments.multimeters import DM3058_MODELS, RigolDM3058
 from lab_mcp.instruments.power_supplies import RIGOL_DP_MODELS, MansonHCS, RigolDP, SerialTransport
+from lab_mcp.instruments.signal_generators import AFG_MODELS, AFGSerialTransport, GWInstekAFG2000
 
 IO_TIMEOUT_MS = 5000
 # A multimeter query waits for the reading. Autorange of a resistance took 2.4 s in a test.
@@ -43,6 +44,8 @@ mcp = MCPServer(
         "Manson HCS series: DC power supply with one output, tools hcs_*. "
         "Read the limits of the HCS model with hcs_status. "
         "Rigol DM3058 and DM3058E: digital multimeter, tools dmm_*. "
+        "GW Instek AFG-2105: signal generator, tools sig_*. "
+        "Read sig_status for the load setting and voltage limits before setting or enabling a signal. "
         "Set the voltage and the current limit before you switch an output on. "
         "Read the status before you switch an output on. "
         "After a change, wait 1 s before you measure. "
@@ -67,6 +70,10 @@ HCS_HINT = (
     "Make sure that Windows shows a COM port for the instrument (Silicon Labs CP210x driver). "
     "Close other programs that use the port."
 )
+AFG_HINT = (
+    "Connect the USB cable. Make sure that the operating system shows a serial port for the "
+    "GW Instek AFG (USB CDC, not USB-TMC). Close other programs that use the port."
+)
 
 
 def _is_rigol_dp(inst: DiscoveredInstrument) -> bool:
@@ -79,6 +86,10 @@ def _is_dm3058(inst: DiscoveredInstrument) -> bool:
 
 def _is_hcs(inst: DiscoveredInstrument) -> bool:
     return inst.is_manson and inst.model.upper().startswith("HCS")
+
+
+def _is_afg(inst: DiscoveredInstrument) -> bool:
+    return inst.is_gwinstek and inst.model.upper() in AFG_MODELS
 
 
 class _Slot(Generic[T]):
@@ -228,6 +239,16 @@ def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]
     return dev, dev.close
 
 
+def _open_afg(info: DiscoveredInstrument) -> tuple[GWInstekAFG2000, Callable[[], None]]:
+    transport = AFGSerialTransport.open(info.address)
+    try:
+        dev = GWInstekAFG2000(transport, info.model)
+    except Exception:
+        transport.close()
+        raise
+    return dev, dev.close
+
+
 lock = threading.RLock()
 rigol_dp = _Slot[RigolDP](
     "Rigol DP", _is_rigol_dp, _open_rigol_dp, _identify_visa_address, RIGOL_DP_HINT, _visa_is_open
@@ -236,7 +257,10 @@ hcs = _Slot[MansonHCS]("Manson HCS", _is_hcs, _open_hcs, discovery.identify_hcs,
 dm3058 = _Slot[RigolDM3058](
     "Rigol DM3058", _is_dm3058, _open_dm3058, _identify_visa_address, DMM_HINT, _visa_is_open
 )
-SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058]
+afg = _Slot[GWInstekAFG2000](
+    "GW Instek AFG", _is_afg, _open_afg, discovery.identify_afg, AFG_HINT, lambda d: d.is_open
+)
+SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058, afg]
 
 
 def _open_serial_ports() -> list[str]:
@@ -291,13 +315,20 @@ def all_outputs_off() -> list[OutputOffResult]:
     """Switch off all outputs of all instruments that the server can find."""
     results = []
     with lock:
-        for slot, switch_off in ((rigol_dp, lambda d: d.all_outputs_off()), (hcs, lambda d: d.set_output(False))):
+        for slot, switch_off in (
+            (rigol_dp, lambda d: d.all_outputs_off()),
+            (hcs, lambda d: d.set_output(False)),
+            (afg, lambda d: d.set_output(False)),
+        ):
+            connected = False
             try:
                 dev = slot.device()
+                connected = True
                 switch_off(dev)
                 results.append(OutputOffResult(instrument=slot.name, serial=slot.info().serial, result="off"))
-            except RuntimeError as exc:  # no instrument of this type found
-                results.append(OutputOffResult(instrument=slot.name, result=f"not found: {exc}"))
+            except RuntimeError as exc:
+                reason = "command failed" if connected else "not found"
+                results.append(OutputOffResult(instrument=slot.name, result=f"{reason}: {exc}"))
             except (pyvisa.Error, OSError) as exc:
                 slot.close()
                 results.append(OutputOffResult(instrument=slot.name, result=f"communication failed: {exc}"))
@@ -325,7 +356,7 @@ def main(argv: list[str] | None = None) -> None:
 
 # The tool modules register their tools on mcp. They import mcp, the slots and _guard
 # from this module, thus this import must be after these definitions.
-from lab_mcp.tools import multimeters, power_supplies  # noqa: E402, F401
+from lab_mcp.tools import multimeters, power_supplies, signal_generators  # noqa: E402, F401
 
 
 if __name__ == "__main__":

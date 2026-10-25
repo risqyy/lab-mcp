@@ -7,7 +7,7 @@ Discovery has three phases:
    instruments that answer the VXI-11 broadcast. Each candidate gets ``*IDN?``.
 2. If phase 1 finds no instrument: a scan of the local /24 networks for TCP port 5555
    (Rigol raw SCPI). This is for networks that block the VXI-11 broadcast.
-3. Serial ports of known USB-serial bridges (Manson HCS). Each candidate gets ``GMOD``.
+3. Known serial USB devices: Manson HCS gets ``GMOD``, GW Instek AFG gets ``*IDN?``.
    Other serial ports are not used, because a probe sends data to the port.
 
 Discovery returns only instruments that answer.
@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict
 from serial.tools import list_ports
 
 from lab_mcp.instruments.power_supplies.manson_hcs import SerialTransport
+from lab_mcp.instruments.signal_generators import AFG_MODELS, AFGSerialTransport
 
 log = logging.getLogger(__name__)
 
@@ -39,8 +40,9 @@ SCAN_CONNECT_TIMEOUT_S = 0.3
 SCAN_WORKERS = 128
 # USB-serial bridges in Manson HCS power supplies, as (vendor ID, product ID).
 HCS_USB_IDS = {(0x10C4, 0xEA60)}  # Silicon Labs CP210x
+AFG_USB_IDS = {(0x2184, 0x001C)}  # GW Instek AFG-2105, USB CDC
 SERIAL_PROBE_TIMEOUT_S = 0.5
-SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON")
+SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK")
 
 
 class DiscoveredInstrument(BaseModel):
@@ -60,6 +62,10 @@ class DiscoveredInstrument(BaseModel):
     @property
     def is_manson(self) -> bool:
         return self.manufacturer.upper().startswith("MANSON")
+
+    @property
+    def is_gwinstek(self) -> bool:
+        return self.manufacturer.upper() == "GW INSTEK"
 
     @property
     def is_supported(self) -> bool:
@@ -118,16 +124,51 @@ def discover(
 
 
 def discover_serial(skip_ports: Iterable[str] = ()) -> list[DiscoveredInstrument]:
-    """Find Manson HCS power supplies on the serial ports of known USB-serial bridges."""
+    """Probe only known USB IDs, with the protocol of that instrument family."""
     skip = {p.upper() for p in skip_ports}
     found = []
     for port in list_ports.comports():
-        if (port.vid, port.pid) not in HCS_USB_IDS or port.device.upper() in skip:
+        if port.device.upper() in skip:
             continue
-        inst = identify_hcs(port.device, usb_serial=port.serial_number)
+        if (port.vid, port.pid) in HCS_USB_IDS:
+            inst = identify_hcs(port.device, usb_serial=port.serial_number)
+        elif (port.vid, port.pid) in AFG_USB_IDS:
+            inst = identify_afg(port.device)
+        else:
+            continue
         if inst is not None:
             found.append(inst)
     return found
+
+
+def identify_afg(device: str) -> DiscoveredInstrument | None:
+    """Send *IDN? to a selected serial port. Return only a supported GW Instek AFG."""
+    try:
+        transport = AFGSerialTransport.open(device, timeout=SERIAL_PROBE_TIMEOUT_S)
+    except OSError as exc:
+        log.debug("Cannot open %s: %s", device, exc)
+        return None
+    try:
+        reply = transport.query("*IDN?")
+    except OSError as exc:
+        log.debug("No AFG reply on %s: %s", device, exc)
+        return None
+    finally:
+        transport.close()
+    parts = [p.strip() for p in reply.split(",")]
+    if len(parts) != 4:
+        return None
+    manufacturer, model, serial, firmware = parts
+    if manufacturer.upper() != "GW INSTEK" or model.upper() not in AFG_MODELS:
+        return None
+    if serial.upper().startswith("SN:"):
+        serial = serial[3:].strip()
+    if not serial:
+        return None
+    return DiscoveredInstrument(
+        address=device, backend="serial", manufacturer=manufacturer,
+        model=model.upper(), serial=serial, firmware=firmware,
+    )
 
 
 def identify_hcs(device: str, usb_serial: str | None = None) -> DiscoveredInstrument | None:
