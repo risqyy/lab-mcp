@@ -117,5 +117,5 @@ def test_dmm_not_found_message() -> None:
 
 def test_all_outputs_off_ignores_multimeter(fake_dmm: FakeDM3058Resource) -> None:
     results = call("all_outputs_off").structured_content["result"]
-    assert [r["instrument"] for r in results] == ["Rigol DP", "Manson HCS"]
+    assert [r["instrument"] for r in results] == ["Rigol DP", "Manson HCS", "GW Instek AFG"]
     assert fake_dmm.writes == []

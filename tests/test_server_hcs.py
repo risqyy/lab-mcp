@@ -21,7 +21,8 @@ HCS_INFO = DiscoveredInstrument(
 
 
 @pytest.fixture(autouse=True)
-def fake_hcs() -> Iterator[FakeHCSTransport]:
+def fake_hcs(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeHCSTransport]:
+    monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [])
     t = FakeHCSTransport()
     server.hcs.set(MansonHCS(t), HCS_INFO)
     yield t
@@ -119,7 +120,9 @@ def test_all_outputs_off_switches_every_instrument(fake_dp832: FakeRigolDPResour
     call("dp_output", channel=1, enabled=True)
     call("hcs_output", enabled=True)
     results = call("all_outputs_off").structured_content["result"]
-    assert [r["result"] for r in results] == ["off", "off"]
+    assert [r["result"] for r in results[:2]] == ["off", "off"]
+    assert results[2]["instrument"] == "GW Instek AFG"
+    assert results[2]["result"].startswith("not found")
     assert not any(s["OUT"] for s in fake_dp832.state.values())
     assert fake_hcs.output is False
 
