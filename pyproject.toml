@@ -1,0 +1,32 @@
+[project]
+name = "rigol-mcp"
+version = "0.1.0"
+description = "MCP server for controlling Rigol lab instruments (starting with the DP832 power supply)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp (>=2.3,<3)",
+    "pydantic (>=2.14,<3)",
+    "pyvisa (>=1.16,<2)",
+    "pyvisa-py (>=0.8,<1)",
+]
+
+[project.optional-dependencies]
+# USB-TMC via pyvisa-py additionally needs libusb on the system.
+usb = ["pyusb (>=1.3)"]
+
+[project.scripts]
+rigol-mcp = "rigol_mcp.server:main"
+
+[tool.poetry]
+packages = [{ include = "rigol_mcp", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=9.1"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
