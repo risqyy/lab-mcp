@@ -30,7 +30,13 @@ class FakeDP832Resource:
         elif m := re.fullmatch(r":SOUR(\d):(VOLT|CURR):PROT:STAT (ON|OFF)", msg):
             self.state[int(m[1])][("OVP" if m[2] == "VOLT" else "OCP") + "_STAT"] = m[3] == "ON"
         elif m := re.fullmatch(r":SOUR(\d):(VOLT|CURR):PROT:CLE", msg):
+            # Like the real DP832: this command also switches the output on.
             self.state[int(m[1])][("OVP" if m[2] == "VOLT" else "OCP") + "_TRIP"] = False
+            self.state[int(m[1])]["OUT"] = True
+        elif m := re.fullmatch(r":OUTPut:(OVP|OCP):CLEar CH(\d)", msg):
+            self.state[int(m[2])][m[1] + "_TRIP"] = False
+        elif re.fullmatch(r":OUTP:(OVP|OCP):CLE.*", msg):
+            raise AssertionError(f"the DP832 firmware does not accept the short form {msg!r}")
         elif m := re.fullmatch(r":OUTP CH(\d),(ON|OFF)", msg):
             self.state[int(m[1])]["OUT"] = m[2] == "ON"
         else:

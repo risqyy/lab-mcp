@@ -124,7 +124,7 @@ def dp832_set_protection(
 
 @mcp.tool()
 def dp832_clear_protection(channel: DP832Channel) -> ChannelStatus:
-    """Reset a tripped OVP or OCP. After the reset, you can switch the output on again."""
+    """Reset a tripped OVP or OCP. The output stays off. After the reset, you can switch the output on again."""
     with _guard(dp832):
         dev = dp832.device()
         dev.clear_protection(channel)
