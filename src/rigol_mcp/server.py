@@ -40,6 +40,7 @@ mcp = MCPServer(
         "The server finds the instrument automatically. "
         "Set the voltage and the current limit before you switch an output on. "
         "Read dp832_status before you switch an output on. "
+        "After a change, wait 1 s before you use dp832_measure. "
         "If you are not sure, use dp832_all_off."
     ),
 )
@@ -201,7 +202,11 @@ def dp832_status(channel: DP832Channel | None = None) -> list[ChannelStatus]:
 
 @mcp.tool(annotations=READ_ONLY)
 def dp832_measure(channel: DP832Channel | None = None) -> list[Measurement]:
-    """Measure the output voltage (V), current (A) and power (W). Without channel, measure all channels."""
+    """Measure the output voltage (V), current (A) and power (W). Without channel, measure all channels.
+
+    The instrument updates the measurement approximately one time each second.
+    After you change a setpoint or an output, wait 1 s before you measure.
+    """
     with _guard():
         dev = connections.dp832()
         return [dev.measure(ch) for ch in _channels(dev, channel)]
