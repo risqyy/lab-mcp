@@ -7,9 +7,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from lab_mcp import server
 from lab_mcp.discovery import DiscoveredInstrument
-from lab_mcp.instruments import DP832
+from lab_mcp.instruments.power_supplies import DP832
 
-from fake_dp832 import FakeDP832Resource
+from fake_rigol_dp800 import FakeDP832Resource
 
 INFO = DiscoveredInstrument(
     address="USB0::0x1AB1::0x0E11::DP8C000000001::INSTR",

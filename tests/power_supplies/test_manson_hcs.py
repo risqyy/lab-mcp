@@ -1,8 +1,8 @@
 import pytest
 
-from lab_mcp.instruments.manson_hcs import HCSProtocolError, MansonHCS, SerialTransport
+from lab_mcp.instruments.power_supplies.manson_hcs import HCSProtocolError, MansonHCS, SerialTransport
 
-from fake_hcs import FakeHCSTransport
+from fake_manson_hcs import FakeHCSTransport
 
 
 @pytest.fixture
