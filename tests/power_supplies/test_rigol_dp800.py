@@ -71,6 +71,15 @@ def test_protection_and_status(dev: DP832, res: FakeDP832Resource) -> None:
     assert dev.status(3).ocp_tripped is False
 
 
+def test_clear_protection_keeps_output_off(dev: DP832, res: FakeDP832Resource) -> None:
+    # A trip switches the output off. Clearing the trip must not switch it on again.
+    res.state[1].update(OVP_TRIP=True, OCP_TRIP=True, OUT=False)
+    dev.clear_protection(1)
+    st = dev.status(1)
+    assert (st.ovp_tripped, st.ocp_tripped, st.output_enabled) == (False, False, False)
+    assert res.writes[-2:] == [":OUTPut:OVP:CLEar CH1", ":OUTPut:OCP:CLEar CH1"]
+
+
 def test_ovp_above_channel_maximum_rejected(dev: DP832) -> None:
     with pytest.raises(ValueError):
         dev.set_ovp(3, 6.0)

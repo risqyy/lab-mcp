@@ -133,9 +133,15 @@ class DP832:
         self._res.write(f":SOUR{channel}:CURR:PROT:STAT {'ON' if enabled else 'OFF'}")
 
     def clear_protection(self, channel: int) -> None:
+        """Clear a tripped OVP and OCP. The output stays off.
+
+        Do not use [:SOURce<n>]:VOLTage|CURRent:PROTection:CLEar: it also switches the
+        output on (tested on a DP832, firmware 00.01.14). The DP832 firmware does not
+        accept the short form :OUTP:OVP:CLE, thus the long form is necessary.
+        """
         self._limits(channel)
-        self._res.write(f":SOUR{channel}:VOLT:PROT:CLE")
-        self._res.write(f":SOUR{channel}:CURR:PROT:CLE")
+        self._res.write(f":OUTPut:OVP:CLEar CH{channel}")
+        self._res.write(f":OUTPut:OCP:CLEar CH{channel}")
 
     def status(self, channel: int) -> ChannelStatus:
         self._limits(channel)
