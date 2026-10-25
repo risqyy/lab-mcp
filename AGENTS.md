@@ -26,7 +26,9 @@ Always open a pull request with `main` as the base branch.
 
 1. Read the issue and its acceptance criteria. Fetch the current `origin/main` before you start a new branch.
 2. Create a dedicated branch from `origin/main` in a separate worktree.
-   Use the branch format `codex/issue-<number>-<short-description>`.
+   Use the branch format `<type>/issue-<number>-<short-description>`. Choose a meaningful name in English.
+   Use `feat/` for features, `bug/` for bug fixes, and `docs/` for documentation.
+   Use a suitable prefix for other changes, such as `refactor/`, `test/`, or `chore/`.
    If a worktree and branch already exist for this issue, continue there.
 3. Make all changes for the issue in that worktree. Keep the changes within the issue scope and the user's instructions.
 4. Review the diff and do the checks applicable to the changes.
@@ -40,13 +42,14 @@ Always open a pull request with `main` as the base branch.
 
 ### Example commands
 
+This example is for a documentation change. Use the prefix that describes your change.
 Replace `123` and `short-description` with the issue number and a short description.
 Select a worktree path that does not already exist.
 Run the first two commands from an existing checkout of this repository.
 
 ```sh
 git fetch origin main
-git worktree add -b codex/issue-123-short-description ../lab-mcp-issue-123 origin/main
+git worktree add -b docs/issue-123-short-description ../lab-mcp-issue-123 origin/main
 cd ../lab-mcp-issue-123
 ```
 
@@ -56,8 +59,8 @@ Add only the files for this issue, then commit and push the changes.
 ```sh
 git add <changed-files>
 git commit -m "Describe the change in English"
-git push -u origin codex/issue-123-short-description
-gh pr create --base main --head codex/issue-123-short-description --title "Describe the change" --body-file <pr-body-file>
+git push -u origin docs/issue-123-short-description
+gh pr create --base main --head docs/issue-123-short-description --title "Describe the change" --body-file <pr-body-file>
 ```
 
 Replace `<changed-files>` with the file paths. Replace `<pr-body-file>` with a file that contains the pull request description.
