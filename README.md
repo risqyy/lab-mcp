@@ -235,4 +235,33 @@ Run the tests:
 poetry run pytest
 ```
 
-The tests use simulated instruments (`tests/fake_dp832.py`, `tests/fake_hcs.py`). You do not need an instrument for the tests.
+The tests use simulated instruments (`tests/<category>/fake_*.py`). You do not need an instrument for the tests.
+
+### Project structure
+
+The drivers and the tools have one folder or module for each instrument category.
+
+```text
+src/lab_mcp/
+├── discovery.py               # discovery on USB, LAN and serial ports
+├── server.py                  # MCP server, connection slots, discover_instruments, all_outputs_off
+├── instruments/
+│   └── power_supplies/
+│       ├── rigol_dp800.py     # Rigol DP832
+│       └── manson_hcs.py      # Manson HCS series
+└── tools/
+    └── power_supplies.py      # dp832_* and hcs_* tools
+tests/
+├── test_*.py                  # discovery, server and start of the server process
+└── power_supplies/            # driver tests and simulated instruments
+```
+
+### Add an instrument
+
+1. Find the category of the instrument, for example `power_supplies`, `multimeters` or `oscilloscopes`.
+   If the category folder does not exist, make it in `instruments/`, and make the module in `tools/`.
+2. Add the driver to `instruments/<category>/`. Use the manufacturer and the series for the file name, for example `rigol_dp800.py`.
+3. Add a connection slot in `server.py`, if the instrument needs a new slot.
+4. Add the tools to `tools/<category>.py`. If the module is new, import it at the end of `server.py`.
+5. Add a simulated instrument (`tests/<category>/fake_*.py`) and the tests. Add a new category folder to `tests/conftest.py`.
+6. Add the instrument to the device table in this README.

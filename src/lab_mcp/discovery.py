@@ -28,7 +28,7 @@ import pyvisa
 from pydantic import BaseModel, ConfigDict
 from serial.tools import list_ports
 
-from lab_mcp.instruments.manson_hcs import SerialTransport
+from lab_mcp.instruments.power_supplies.manson_hcs import SerialTransport
 
 log = logging.getLogger(__name__)
 

@@ -1,9 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
-from lab_mcp.instruments import DP832
+from lab_mcp.instruments.power_supplies import DP832
 
-from fake_dp832 import FakeDP832Resource
+from fake_rigol_dp800 import FakeDP832Resource
 
 
 @pytest.fixture
