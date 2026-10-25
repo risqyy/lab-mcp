@@ -89,12 +89,14 @@ class _Slot(Generic[T]):
         open_device: Callable[[DiscoveredInstrument], tuple[T, Callable[[], None]]],
         identify_address: Callable[[str], DiscoveredInstrument | None],
         hint: str,
+        is_open: Callable[[T], bool] = lambda _device: True,
     ) -> None:
         self.name = name
         self._match = match
         self._open_device = open_device
         self._identify_address = identify_address
         self._hint = hint
+        self._is_open = is_open
         self._device: T | None = None
         self._info: DiscoveredInstrument | None = None
         self._close: Callable[[], None] | None = None
@@ -153,6 +155,10 @@ class _Slot(Generic[T]):
         return self._info
 
     def device(self) -> T:
+        # If something closed the connection (for example a VISA session), connect again
+        # before the command. Then the server does not send the command two times.
+        if self._device is not None and not self._is_open(self._device):
+            self.close()
         if self._device is None:
             self.connect()
         assert self._device is not None
@@ -180,6 +186,14 @@ def _open_rigol_dp(info: DiscoveredInstrument) -> tuple[RigolDP, Callable[[], No
         res.close()
         raise
     return dev, res.close
+
+
+def _visa_is_open(device: RigolDP | RigolDM3058) -> bool:
+    try:
+        device.resource.session
+    except pyvisa.errors.InvalidSession:
+        return False
+    return True
 
 
 def _identify_visa_address(address: str) -> DiscoveredInstrument | None:
@@ -213,9 +227,13 @@ def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]
 
 
 lock = threading.RLock()
-rigol_dp = _Slot[RigolDP]("Rigol DP", _is_rigol_dp, _open_rigol_dp, _identify_visa_address, RIGOL_DP_HINT)
+rigol_dp = _Slot[RigolDP](
+    "Rigol DP", _is_rigol_dp, _open_rigol_dp, _identify_visa_address, RIGOL_DP_HINT, _visa_is_open
+)
 hcs = _Slot[MansonHCS]("Manson HCS", _is_hcs, _open_hcs, discovery.identify_hcs, HCS_HINT)
-dm3058 = _Slot[RigolDM3058]("Rigol DM3058", _is_dm3058, _open_dm3058, _identify_visa_address, DMM_HINT)
+dm3058 = _Slot[RigolDM3058](
+    "Rigol DM3058", _is_dm3058, _open_dm3058, _identify_visa_address, DMM_HINT, _visa_is_open
+)
 SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058]
 
 

@@ -115,6 +115,10 @@ class RigolDM3058:
         if self._res.query("CMDSET?").strip().upper() != "RIGOL":
             self._res.write("CMDSET RIGOL")
 
+    @property
+    def resource(self) -> SCPIResource:
+        return self._res
+
     def identify(self) -> str:
         return self._res.query("*IDN?").strip()
 

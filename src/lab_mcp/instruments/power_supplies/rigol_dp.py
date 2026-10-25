@@ -102,6 +102,10 @@ class RigolDP:
         self.limits = self.spec.limits
 
     @property
+    def resource(self) -> SCPIResource:
+        return self._res
+
+    @property
     def channels(self) -> list[int]:
         return sorted(self.limits)
 

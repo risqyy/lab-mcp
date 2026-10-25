@@ -71,7 +71,9 @@ def available_backends() -> list[str]:
     backends = []
     for backend in ("@ivi", "@py"):
         try:
-            pyvisa.ResourceManager(backend).close()
+            # Do not close the ResourceManager: pyvisa shares one per backend, and close()
+            # also closes the connections that the server keeps open.
+            pyvisa.ResourceManager(backend)
         except (OSError, ValueError, pyvisa.Error) as exc:
             log.debug("VISA backend %s unavailable: %s", backend, exc)
         else:
