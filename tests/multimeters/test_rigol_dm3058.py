@@ -28,7 +28,8 @@ def test_keeps_rigol_command_set(res: FakeDM3058Resource, dev: RigolDM3058) -> N
 def test_measure_dc_voltage_autorange(dev: RigolDM3058, res: FakeDM3058Resource) -> None:
     res.values["VOLTage:DC"] = ["8.492853e-05"]
     r = dev.measure("dc_voltage")
-    assert (r.function, r.value, r.unit, r.overload, r.range) == ("dc_voltage", 8.492853e-05, "V", False, "auto")
+    assert (r.function, r.value, r.unit, r.overload) == ("dc_voltage", 8.492853e-05, "V", False)
+    assert (r.range, r.auto_range) == (20.0, True)  # the range that the instrument selected
     assert ":FUNCtion:VOLTage:DC" not in res.writes  # already the present function
 
 
@@ -70,7 +71,7 @@ def test_auto_after_manual_range(dev: RigolDM3058, res: FakeDM3058Resource) -> N
     assert dev.configuration().range == 20.0
     dev.configure("dc_voltage", "auto")
     assert res.writes[-1] == ":MEASure AUTO"
-    assert dev.configuration().range == "auto"
+    assert dev.configuration().auto_range is True
 
 
 def test_function_change_selects_autorange(dev: RigolDM3058, res: FakeDM3058Resource) -> None:
@@ -87,7 +88,8 @@ def test_speed(dev: RigolDM3058, res: FakeDM3058Resource) -> None:
         dev.configure("frequency", speed="fast")
 
 
-@pytest.mark.parametrize("reply", ["9.900000e+37", "-9.9E+37", "OVERLOAD", "nan"])
+# 9.000000E+15: the real DM3058E (firmware 01.01.00.02.03.01) with open inputs.
+@pytest.mark.parametrize("reply", ["9.000000E+15", "-9.000000E+15", "9.900000e+37", "OVERLOAD", "nan"])
 def test_overload(dev: RigolDM3058, res: FakeDM3058Resource, reply: str) -> None:
     res.values["VOLTage:DC"] = [reply]
     r = dev.measure("dc_voltage")
@@ -95,14 +97,35 @@ def test_overload(dev: RigolDM3058, res: FakeDM3058Resource, reply: str) -> None
 
 
 @pytest.mark.parametrize(
-    ("function", "scpi", "unit"),
-    [("frequency", "FREQuency", "Hz"), ("period", "PERiod", "s"), ("continuity", "CONTinuity", "Ohm"),
-     ("diode", "DIODe", "V"), ("resistance_4w", "FRESistance", "Ohm")],
+    ("function", "scpi", "unit", "full_scale"),
+    [("frequency", "FREQuency", "Hz", None), ("period", "PERiod", "s", None), ("continuity", "CONTinuity", "Ohm", None),
+     ("diode", "DIODe", "V", None), ("resistance_4w", "FRESistance", "Ohm", 200e3)],
 )
-def test_other_functions(dev: RigolDM3058, res: FakeDM3058Resource, function, scpi, unit) -> None:
+def test_other_functions(dev: RigolDM3058, res: FakeDM3058Resource, function, scpi, unit, full_scale) -> None:
     r = dev.measure(function)
     assert res.writes[0] == f":FUNCtion:{scpi}"
-    assert (r.function, r.unit, r.range) == (function, unit, "auto")
+    assert (r.function, r.unit, r.range) == (function, unit, full_scale)
+    assert r.auto_range == (True if full_scale else None)
+
+
+def test_autorange_reports_selected_range(dev: RigolDM3058, res: FakeDM3058Resource) -> None:
+    # With open inputs, the real instrument selects the 100 MOhm range (index 6) and sends 9.000000E+15.
+    res.ranges["RESistance"] = 6
+    res.values["RESistance"] = ["9.000000E+15"]
+    r = dev.measure("resistance_2w")
+    assert (r.range, r.auto_range, r.overload, r.value) == (100e6, True, True, None)
+
+
+def test_auto_range_unknown_before_first_configuration(dev: RigolDM3058) -> None:
+    assert dev.read().auto_range is None
+
+
+@pytest.mark.parametrize(("speed", "seconds"), [("slow", 0.5), ("medium", 0.06), ("fast", 0.02)])
+def test_estimated_reading_time(dev: RigolDM3058, speed: str, seconds: float) -> None:
+    dev.configure("dc_voltage", speed=speed)
+    assert dev.estimated_reading_time() == seconds
+    dev.configure("frequency")
+    assert dev.estimated_reading_time() == 0.85
 
 
 def test_function_reply_variants(dev: RigolDM3058, res: FakeDM3058Resource, monkeypatch) -> None:

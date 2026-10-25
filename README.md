@@ -16,7 +16,7 @@ The server finds the instruments automatically. You do not need to configure add
 | Rigol DP932U | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Rigol DP932E | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
-| Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | No                                      |
+| Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 
 "Tested" means that a test on a real instrument was done with all tools.
@@ -24,7 +24,8 @@ The LAN connection is not tested on a real instrument.
 
 The DP900 support (DP932A, DP932U, DP932E) agrees with the DP900 programming guide (July 2024). It is not tested on a real instrument.
 
-The DM3058/DM3058E support agrees with the DM3058/DM3058E programming guide (January 2015). It is not tested on a real instrument.
+The DM3058E is tested with open inputs: all functions, ranges, overload, speed, series and command set.
+The test with a voltage source and with components is open (issue #10).
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
@@ -192,7 +193,22 @@ Functions: `dc_voltage`, `ac_voltage`, `dc_current`, `ac_current`, `resistance_2
 `frequency`, `period`, `continuity`, `diode`, `capacitance`.
 
 Range: give the largest value that you expect (`expected_max`). The server selects the smallest range
-that includes this value. Use `auto` for autorange. A value out of the range gives `overload: true` and no value.
+that includes this value. Use `auto` for autorange. The reading shows the range that the instrument used,
+also with autorange. A value out of the range gives `overload: true` and no value.
+
+### Rigol DM3058E: behavior of the instrument
+
+These items were found in a test with a DM3058E (firmware 01.01.00.02.03.01) with open inputs:
+
+| Item                                    | Behavior                                                       |
+|-----------------------------------------|----------------------------------------------------------------|
+| Overload                                | The instrument sends `9.000000E+15`, not `9.9E+37` (SCPI convention). |
+| `:FUNCtion?`                            | Short replies: `DCV`, `ACV`, `DCI`, `ACI`, `2WR`, `4WR`, `FREQ`, `PERI`, `CONT`, `DIODE`, `CAP`. |
+| `:MEASure:<function>:RANGe?` with autorange | Sends the range that the instrument selected.              |
+| `:RATE:<function>?`                     | Sends `SLOW`, `MEDIUM` or `FAST`, not the letter of the command. |
+| Time for one reading                    | Slow approximately 450 ms, medium 70 ms, fast 16 ms. Frequency and period approximately 0.8 s. The first resistance reading with autorange can take 2.4 s. |
+| 4-wire resistance with open inputs      | The instrument shows a random value (for example 117 Ω), not an overload. Make sure that all four test leads are connected. |
+| AC voltage and frequency with open inputs | The instrument shows approximately 10 mV and 50 Hz (mains interference on the test leads). |
 
 ### Manson HCS
 

@@ -26,6 +26,8 @@ from lab_mcp.instruments.multimeters import DM3058_MODELS, RigolDM3058
 from lab_mcp.instruments.power_supplies import RIGOL_DP_MODELS, MansonHCS, RigolDP, SerialTransport
 
 IO_TIMEOUT_MS = 5000
+# A multimeter query waits for the reading. Autorange of a resistance took 2.4 s in a test.
+DMM_IO_TIMEOUT_MS = 10000
 # The server has no authentication. Thus it accepts only local connections by default.
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10765
@@ -206,7 +208,7 @@ def _identify_visa_address(address: str) -> DiscoveredInstrument | None:
 
 def _open_dm3058(info: DiscoveredInstrument) -> tuple[RigolDM3058, Callable[[], None]]:
     res = pyvisa.ResourceManager(info.backend).open_resource(
-        info.address, read_termination="\n", write_termination="\n", timeout=IO_TIMEOUT_MS
+        info.address, read_termination="\n", write_termination="\n", timeout=DMM_IO_TIMEOUT_MS
     )
     try:
         dev = RigolDM3058(res)

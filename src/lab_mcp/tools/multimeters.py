@@ -111,11 +111,15 @@ def dmm_measure_series(
 ) -> DMMSeries:
     """Measure a series of values with the present function and range, and calculate the statistics.
 
-    Use dmm_configure first. The series can take a maximum of 300 s (count x interval_s).
+    Use dmm_configure first. The series can take a maximum of 300 s. Each reading also needs time:
+    approximately 0.5 s at the slow rate, 0.06 s at medium, 0.02 s at fast, 0.85 s for frequency and period.
     """
     with _guard(dm3058):
-        if (count - 1) * interval_s > MAX_SERIES_DURATION_S:
+        dev = dm3058.device()
+        duration = count * dev.estimated_reading_time() + (count - 1) * interval_s
+        if duration > MAX_SERIES_DURATION_S:
             raise ValueError(
-                f"The series takes {(count - 1) * interval_s:.0f} s. The maximum is {MAX_SERIES_DURATION_S:.0f} s."
+                f"The series takes approximately {duration:.0f} s. The maximum is {MAX_SERIES_DURATION_S:.0f} s. "
+                "Use fewer readings, a shorter interval or a faster rate."
             )
-        return dm3058.device().measure_series(count, interval_s)
+        return dev.measure_series(count, interval_s)
