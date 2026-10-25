@@ -12,10 +12,15 @@ The server finds the instruments automatically. You do not need to configure add
 |--------------|------------------------------------|-----------------------|-----------|-----------------------------------------|
 | Rigol DP832  | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | Yes (USB, firmware 00.01.14)            |
 | Rigol DP832A | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
+| Rigol DP932A | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
+| Rigol DP932U | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
+| Rigol DP932E | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
 
 "Tested" means that a test on a real instrument was done with all tools.
 The LAN connection is not tested on a real instrument.
+
+The DP900 support (DP932A, DP932U, DP932E) agrees with the DP900 programming guide (July 2024). It is not tested on a real instrument.
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
@@ -140,8 +145,9 @@ The server does these steps:
 If an instrument does not answer, the server closes the connection.
 At the next tool call, the server finds the instrument again.
 
-If there is more than one instrument of a type, the server uses the instrument with the lowest serial number.
-To use a different instrument, use `dp832_connect` or `hcs_connect` with the serial number.
+If there is more than one instrument of a type, the server does not select one.
+A command to the wrong instrument can be dangerous. The tools then send an error message with a list of the instruments.
+Use `dp_connect` or `hcs_connect` with the serial number to select one.
 
 ## Tools
 
@@ -152,19 +158,19 @@ To use a different instrument, use `dp832_connect` or `hcs_connect` with the ser
 | `discover_instruments`   | Find all supported instruments on USB, on the LAN and on serial ports. |
 | `all_outputs_off`        | Switch off all outputs of all instruments that the server finds. |
 
-### Rigol DP832
+### Rigol DP800 and DP900 series
 
 | Tool                     | Function                                                         |
 |--------------------------|------------------------------------------------------------------|
-| `dp832_connect`          | Connect to a DP832 by serial number or by VISA address.          |
-| `dp832_identify`         | Show the address, model, serial number and firmware.             |
-| `dp832_status`           | Read the output state, setpoints, OVP, OCP and CV/CC mode.       |
-| `dp832_measure`          | Measure the voltage, current and power of the outputs.           |
-| `dp832_set`              | Set the voltage and the current limit of one channel.            |
-| `dp832_output`           | Switch the output of one channel on or off.                      |
-| `dp832_all_off`          | Switch all outputs of the DP832 off.                             |
-| `dp832_set_protection`   | Set the over-voltage protection (OVP) and over-current protection (OCP). |
-| `dp832_clear_protection` | Reset a tripped OVP or OCP.                                      |
+| `dp_connect`             | Connect to a DP by serial number or by VISA address.             |
+| `dp_identify`            | Show the address, model, serial number and firmware.             |
+| `dp_status`              | Read the output state, setpoints, OVP, OCP, CV/CC mode, limits and coupling. |
+| `dp_measure`             | Measure the voltage, current and power of the outputs.           |
+| `dp_set`                 | Set the voltage and the current limit of one channel.            |
+| `dp_output`              | Switch the output of one channel on or off.                      |
+| `dp_all_off`             | Switch all outputs of the DP off.                                |
+| `dp_set_protection`      | Set the over-voltage protection (OVP) and over-current protection (OCP). |
+| `dp_clear_protection`    | Reset a tripped OVP or OCP. The output stays off.                |
 
 ### Manson HCS
 
@@ -185,13 +191,32 @@ To use a different instrument, use `dp832_connect` or `hcs_connect` with the ser
 The server examines each value before it sends the value to the instrument.
 The server does not send values that are out of range.
 
-Rigol DP832:
+Rigol DP800 and DP900 series (the server identifies the model with `*IDN?`):
 
-| Channel | Voltage   | Current  | OVP max. | OCP max. |
-|---------|-----------|----------|----------|----------|
-| CH1     | 0 to 30 V | 0 to 3 A | 33 V     | 3.3 A    |
-| CH2     | 0 to 30 V | 0 to 3 A | 33 V     | 3.3 A    |
-| CH3     | 0 to 5 V  | 0 to 3 A | 5.5 V    | 3.3 A    |
+| Model              | Channel  | Voltage   | Current  | OVP max. | OCP max. |
+|--------------------|----------|-----------|----------|----------|----------|
+| DP832, DP832A      | CH1, CH2 | 0 to 30 V | 0 to 3 A | 33 V     | 3.3 A    |
+| DP832, DP832A      | CH3      | 0 to 5 V  | 0 to 3 A | 5.5 V    | 3.3 A    |
+| DP932A, DP932U     | CH1, CH2 | 0 to 32 V | 0 to 3 A | 35.2 V   | 3.3 A    |
+| DP932A, DP932U     | CH3      | 0 to 6 V  | 0 to 3 A | 6.6 V    | 3.3 A    |
+| DP932E             | CH1, CH2 | 0 to 30 V | 0 to 3 A | 33 V     | 3.3 A    |
+| DP932E             | CH3      | 0 to 6 V  | 0 to 3 A | 6.6 V    | 3.3 A    |
+
+The voltage and current limits are the rated values. The DP900 accepts 5 % more, but the server does not use this range.
+
+**CAUTION:** While tracking is on, a change of CH1 also changes CH2. On the DP900, CH1 and CH2 can be connected
+in series or in parallel (internal). In these modes, the server does not change CH1 or CH2.
+It can always switch the outputs off. Set the mode on the instrument. `dp_status` shows the mode.
+
+### Rigol DP: behavior of the instrument
+
+| Item                                            | Behavior                                                       |
+|-------------------------------------------------|----------------------------------------------------------------|
+| `[:SOURce<n>]:VOLTage\|CURRent:PROTection:CLEar` | Clears the trip and switches the output on (tested on the DP832, documented for the DP900). The server does not use this command. |
+| `:OUTPut:OVP:CLEar CHx`, `:OUTPut:OCP:CLEar CHx` | Clears the trip. The output stays off. The server uses these commands. |
+| `:OUTP:OVP:CLE` (short form)                    | The DP832 firmware 00.01.14 does not accept it (error -113). |
+| `:OUTP:PAIR?`                                   | Only the DP900. The DP832 does not reply. |
+| Boolean replies                                 | DP800: `ON`/`OFF` and `YES`/`NO`. DP900: `1`/`0`. |
 
 Manson HCS: the server reads the limits from the instrument (`GMAX`).
 The HCS-3404 that was tested sends 60.5 V and 11.0 A.
@@ -225,7 +250,8 @@ These items were found in a test with an HCS-3404:
 | The server does not find a USB instrument  | Install a USB-TMC driver. Use NI-VISA, or use WinUSB on Windows (for example, with Zadig). |
 | The server does not find a LAN instrument  | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
 | The server does not find a Manson HCS      | Set the MODE switch on the rear panel to "Normal". Make sure that the instrument is on. Make sure that the operating system shows a COM port for the CP210x bridge. If not, install the Silicon Labs CP210x driver. Close other programs that use the port. |
-| The server finds the wrong instrument      | Use `discover_instruments`. Then use `dp832_connect` or `hcs_connect` with the serial number. |
+| The server does not find a Rigol DP        | Close other programs that use the instrument. Then try again. |
+| The server finds more than one instrument  | Use `discover_instruments`. Then use `dp_connect` or `hcs_connect` with the serial number. |
 
 ## Development
 
@@ -247,10 +273,10 @@ src/lab_mcp/
 ├── server.py                  # MCP server, connection slots, discover_instruments, all_outputs_off
 ├── instruments/
 │   └── power_supplies/
-│       ├── rigol_dp800.py     # Rigol DP832
+│       ├── rigol_dp.py        # Rigol DP800 and DP900 series
 │       └── manson_hcs.py      # Manson HCS series
 └── tools/
-    └── power_supplies.py      # dp832_* and hcs_* tools
+    └── power_supplies.py      # dp_* and hcs_* tools
 tests/
 ├── test_*.py                  # discovery, server and start of the server process
 └── power_supplies/            # driver tests and simulated instruments
@@ -260,7 +286,7 @@ tests/
 
 1. Find the category of the instrument, for example `power_supplies`, `multimeters` or `oscilloscopes`.
    If the category folder does not exist, make it in `instruments/`, and make the module in `tools/`.
-2. Add the driver to `instruments/<category>/`. Use the manufacturer and the series for the file name, for example `rigol_dp800.py`.
+2. Add the driver to `instruments/<category>/`. Use the manufacturer and the series for the file name, for example `rigol_dp.py`.
 3. Add a connection slot in `server.py`, if the instrument needs a new slot.
 4. Add the tools to `tools/<category>.py`. If the module is new, import it at the end of `server.py`.
 5. Add a simulated instrument (`tests/<category>/fake_*.py`) and the tests. Add a new category folder to `tests/conftest.py`.

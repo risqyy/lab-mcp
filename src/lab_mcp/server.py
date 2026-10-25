@@ -22,9 +22,8 @@ from pydantic import BaseModel, Field
 
 from lab_mcp import discovery
 from lab_mcp.discovery import DiscoveredInstrument
-from lab_mcp.instruments.power_supplies import DP832, MansonHCS, SerialTransport
+from lab_mcp.instruments.power_supplies import RIGOL_DP_MODELS, MansonHCS, RigolDP, SerialTransport
 
-DP832_MODELS = {"DP832", "DP832A"}
 IO_TIMEOUT_MS = 5000
 # The server has no authentication. Thus it accepts only local connections by default.
 DEFAULT_HOST = "127.0.0.1"
@@ -36,8 +35,8 @@ mcp = MCPServer(
     "lab-mcp",
     instructions=(
         "This server controls laboratory instruments. The server finds the instruments automatically. "
-        "Rigol DP832: DC power supply with three outputs, tools dp832_*. "
-        "CH1 and CH2: 0-30 V, 0-3 A. CH3: 0-5 V, 0-3 A. "
+        "Rigol DP800 and DP900 series (DP832, DP932A, ...): DC power supplies with three outputs, tools dp_*. "
+        "Read the limits of each channel with dp_status. "
         "Manson HCS series: DC power supply with one output, tools hcs_*. "
         "Read the limits of the HCS model with hcs_status. "
         "Set the voltage and the current limit before you switch an output on. "
@@ -50,18 +49,20 @@ mcp = MCPServer(
 T = TypeVar("T")
 
 # Message for each instrument type when discovery finds no instrument.
-DP832_HINT = (
+RIGOL_DP_HINT = (
     "For USB, connect the cable and install a USB-TMC driver (NI-VISA, or WinUSB on Windows). "
-    "For LAN, connect the instrument to the same network as this computer."
+    "For LAN, connect the instrument to the same network as this computer. "
+    "Close other programs that use the instrument."
 )
 HCS_HINT = (
     "Set the MODE switch on the rear panel to Normal. Connect the USB cable. "
-    "Make sure that Windows shows a COM port for the instrument (Silicon Labs CP210x driver)."
+    "Make sure that Windows shows a COM port for the instrument (Silicon Labs CP210x driver). "
+    "Close other programs that use the port."
 )
 
 
-def _is_dp832(inst: DiscoveredInstrument) -> bool:
-    return inst.is_rigol and inst.model.upper() in DP832_MODELS
+def _is_rigol_dp(inst: DiscoveredInstrument) -> bool:
+    return inst.is_rigol and inst.model.upper() in RIGOL_DP_MODELS
 
 
 def _is_hcs(inst: DiscoveredInstrument) -> bool:
@@ -89,7 +90,12 @@ class _Slot(Generic[T]):
         self._close: Callable[[], None] | None = None
 
     def connect(self, serial: str | None = None, address: str | None = None) -> DiscoveredInstrument:
-        """Connect to the instrument. Without arguments, use the first instrument that discovery finds."""
+        """Connect to the instrument.
+
+        Without arguments, discovery must find exactly one instrument of this type. If it
+        finds more, the serial number is necessary: the server does not select one, because
+        a command to the wrong instrument can be dangerous.
+        """
         if address is not None:
             info = self._identify_address(address)
             if info is None:
@@ -106,6 +112,12 @@ class _Slot(Generic[T]):
                 raise RuntimeError(
                     f"{what} Make sure that the instrument is on. {self._hint} "
                     "Use discover_instruments to see all instruments that the server finds."
+                )
+            if len(found) > 1:
+                listed = ", ".join(f"{i.model} {i.serial} ({i.address})" for i in found)
+                raise RuntimeError(
+                    f"More than one {self.name} found: {listed}. "
+                    f"Select one with the serial parameter of the connect tool."
                 )
             info = found[0]
         if not self._match(info):
@@ -148,11 +160,16 @@ class _Slot(Generic[T]):
         self._info = info
 
 
-def _open_dp832(info: DiscoveredInstrument) -> tuple[DP832, Callable[[], None]]:
+def _open_rigol_dp(info: DiscoveredInstrument) -> tuple[RigolDP, Callable[[], None]]:
     res = pyvisa.ResourceManager(info.backend).open_resource(
         info.address, read_termination="\n", write_termination="\n", timeout=IO_TIMEOUT_MS
     )
-    return DP832(res), res.close
+    try:
+        dev = RigolDP(res, info.model)
+    except Exception:
+        res.close()
+        raise
+    return dev, res.close
 
 
 def _identify_visa_address(address: str) -> DiscoveredInstrument | None:
@@ -174,9 +191,9 @@ def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]
 
 
 lock = threading.RLock()
-dp832 = _Slot[DP832]("DP832", _is_dp832, _open_dp832, _identify_visa_address, DP832_HINT)
+rigol_dp = _Slot[RigolDP]("Rigol DP", _is_rigol_dp, _open_rigol_dp, _identify_visa_address, RIGOL_DP_HINT)
 hcs = _Slot[MansonHCS]("Manson HCS", _is_hcs, _open_hcs, discovery.identify_hcs, HCS_HINT)
-SLOTS: list[_Slot] = [dp832, hcs]
+SLOTS: list[_Slot] = [rigol_dp, hcs]
 
 
 def _open_serial_ports() -> list[str]:
@@ -231,7 +248,7 @@ def all_outputs_off() -> list[OutputOffResult]:
     """Switch off all outputs of all instruments that the server can find."""
     results = []
     with lock:
-        for slot, switch_off in ((dp832, lambda d: d.all_outputs_off()), (hcs, lambda d: d.set_output(False))):
+        for slot, switch_off in ((rigol_dp, lambda d: d.all_outputs_off()), (hcs, lambda d: d.set_output(False))):
             try:
                 dev = slot.device()
                 switch_off(dev)
