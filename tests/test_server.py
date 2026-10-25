@@ -129,6 +129,21 @@ def test_reconnects_after_communication_error(fake_discovery, monkeypatch: pytes
     assert len(opened) == 2
 
 
+def test_reconnects_when_session_was_closed(fake_discovery) -> None:
+    # A closed ResourceManager closes the session (pyvisa: "Invalid session handle").
+    # The server connects again before the command and sends the command one time.
+    found, opened = fake_discovery
+    found.append(INFO)
+    call("dp_status", channel=1)
+    opened[0].close()
+
+    result = call("dp_set", channel=1, voltage=3.3)
+    assert result.structured_content["voltage_setpoint"] == 3.3
+    assert len(opened) == 2
+    assert opened[1].writes == [":SOUR1:VOLT 3.300"]
+    assert ":SOUR1:VOLT 3.300" not in opened[0].writes
+
+
 @pytest.mark.parametrize(
     "arguments",
     [{"channel": 4, "enabled": True}, {"channel": 0, "enabled": True}, {"channel": "x", "enabled": True}],

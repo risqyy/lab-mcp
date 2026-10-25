@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pyvisa
+
 # :FUNCtion keyword -> reply to :FUNCtion? (as in the programming guide)
 FUNCTION_REPLIES = {
     "VOLTage:DC": "DCV", "VOLTage:AC": "ACV", "CURRent:DC": "DCI", "CURRent:AC": "ACI",
@@ -23,9 +25,17 @@ class FakeDM3058Resource:
         self.ranges = dict(DEFAULT_RANGES)
         self.rates = {f: "M" for f in ("VOLTage:DC", "VOLTage:AC", "CURRent:DC", "CURRent:AC", "RESistance", "FRESistance")}
         self.values: dict[str, list[str]] = {f: ["1.234560e+00"] for f in FUNCTION_REPLIES}
+        self.closed = False
+
+    @property
+    def session(self) -> int:
+        # As pyvisa: a closed resource has no session.
+        if self.closed:
+            raise pyvisa.errors.InvalidSession()
+        return 1
 
     def close(self) -> None:
-        pass
+        self.closed = True
 
     def write(self, msg: str) -> None:
         self.writes.append(msg)

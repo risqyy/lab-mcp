@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pyvisa
+
 
 class FakeRigolDPResource:
     def __init__(self, model: str = "DP832") -> None:
@@ -22,6 +24,7 @@ class FakeRigolDPResource:
         self.tracking = False
         self.pair = "OFF"  # DP900 only: OFF, PARALLEL or SERIES
         self.load_ohms = 10.0
+        self.closed = False
 
     def _bool(self, value: bool, yes_no: bool = False) -> str:
         if self.dp900:
@@ -30,8 +33,15 @@ class FakeRigolDPResource:
             return "YES" if value else "NO"
         return "ON" if value else "OFF"
 
+    @property
+    def session(self) -> int:
+        # As pyvisa: a closed resource has no session.
+        if self.closed:
+            raise pyvisa.errors.InvalidSession()
+        return 1
+
     def close(self) -> None:
-        pass
+        self.closed = True
 
     def write(self, msg: str) -> None:
         self.writes.append(msg)

@@ -108,3 +108,19 @@ def test_scan_finds_listening_port() -> None:
         port = server.getsockname()[1]
         hosts = discovery.scan_for_scpi_hosts([ipaddress.IPv4Network("127.0.0.0/30")], port=port)
     assert hosts == ["127.0.0.1"]
+
+
+def test_available_backends_keeps_resource_manager_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    # pyvisa shares one ResourceManager per backend. close() also closes the connections of the server.
+    closed = []
+
+    class FakeRM:
+        def __init__(self, backend: str) -> None:
+            pass
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(discovery.pyvisa, "ResourceManager", FakeRM)
+    assert discovery.available_backends() == ["@ivi", "@py"]
+    assert closed == []
