@@ -16,7 +16,7 @@ The server finds the instruments automatically. You do not need to configure add
 | Rigol DP932U | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Rigol DP932E | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
-| Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs) |
+| Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 
 "Tested" means that a test on a real instrument was done with all tools.
@@ -24,8 +24,9 @@ The LAN connection is not tested on a real instrument.
 
 The DP900 support (DP932A, DP932U, DP932E) agrees with the DP900 programming guide (July 2024). It is not tested on a real instrument.
 
-The DM3058E is tested with open inputs: all functions, ranges, overload, speed, series and command set.
-The test with a voltage source and with components is open (issue #10).
+The DM3058E is tested with open inputs (all functions, ranges, overload, speed, series and command set)
+and with DC voltage from a DP832 (1.5 V to 12.4 V: the difference to the DP832 measurement is less than 13 mV).
+The test with components, current and AC signals is open (issue #10).
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
