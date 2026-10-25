@@ -45,7 +45,7 @@ def test_dmm_measure(fake_dmm: FakeDM3058Resource) -> None:
 
 def test_dmm_measure_auto_is_default(fake_dmm: FakeDM3058Resource) -> None:
     r = call("dmm_measure", function="resistance_2w").structured_content
-    assert (r["function"], r["range"]) == ("resistance_2w", "auto")
+    assert (r["function"], r["range"], r["auto_range"]) == ("resistance_2w", 200e3, True)
 
 
 def test_dmm_overload_reaches_model(fake_dmm: FakeDM3058Resource) -> None:
@@ -76,6 +76,15 @@ def test_dmm_configure_and_series(fake_dmm: FakeDM3058Resource) -> None:
 def test_dmm_series_duration_limit() -> None:
     with pytest.raises(ToolError, match="The maximum is 300 s"):
         call("dmm_measure_series", count=1000, interval_s=1)
+
+
+def test_dmm_series_duration_includes_reading_time() -> None:
+    # 700 readings at the slow rate take approximately 350 s, also without an interval.
+    call("dmm_configure", function="dc_voltage", speed="slow")
+    with pytest.raises(ToolError, match="approximately 350 s"):
+        call("dmm_measure_series", count=700, interval_s=0)
+    call("dmm_configure", function="dc_voltage", speed="fast")
+    assert call("dmm_measure_series", count=700, interval_s=0).structured_content["count"] == 700
 
 
 def test_current_warning_in_description() -> None:

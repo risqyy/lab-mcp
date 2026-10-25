@@ -70,5 +70,6 @@ class FakeDM3058Resource:
             values = self.values[m[1]]
             return values.pop(0) if len(values) > 1 else values[0]
         if m := re.fullmatch(r":RATE:(\S+)\?", msg):
-            return self.rates[m[1]]
+            # Like the real DM3058E: the full word, not the letter of the command.
+            return {"S": "SLOW", "M": "MEDIUM", "F": "FAST"}[self.rates[m[1]]]
         raise AssertionError(f"unexpected query {msg!r}")

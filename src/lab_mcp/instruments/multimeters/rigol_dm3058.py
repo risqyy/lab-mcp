@@ -23,10 +23,13 @@ MeasurementFunction = Literal[
 ]
 Speed = Literal["slow", "medium", "fast"]
 
-# The instrument sends a very large value for an overload (SCPI convention: 9.9E+37).
-OVERLOAD_THRESHOLD = 1e37
-# Time for the first reading after a change of the function or the range.
-SETTLE_TIME_S = 0.5
+# For an overload, the DM3058E sends 9.000000E+15 (tested, firmware 01.01.00.02.03.01).
+# The SCPI convention is 9.9E+37. No real value of any function reaches 1E+15.
+OVERLOAD_THRESHOLD = 1e15
+# Approximate time for one reading. A query waits until the instrument has a value.
+# Tested: slow rate approximately 0.48 s, frequency and period approximately 0.8 s.
+READING_TIME_S = {"slow": 0.5, "medium": 0.06, "fast": 0.02, None: 0.5}
+SLOW_FUNCTION_READING_TIME_S = 0.85  # frequency, period
 
 
 class SCPIResource(Protocol):
@@ -83,7 +86,8 @@ class DMMReading(_Model):
     value: float | None = Field(description="Measured value in unit. None if the instrument shows an overload.")
     unit: str
     overload: bool = Field(description="True if the value is out of the range")
-    range: float | Literal["auto"] = Field(description="Full scale of the range in unit, or auto")
+    range: float | None = Field(description="Full scale of the range that the instrument used, in unit. None for functions without ranges.")
+    auto_range: bool | None = Field(description="True for autorange. None if not known (the instrument has no query for it).")
 
 
 class DMMSeries(_Model):
@@ -101,7 +105,8 @@ class DMMSeries(_Model):
 class DMMConfiguration(_Model):
     function: MeasurementFunction
     unit: str
-    range: float | Literal["auto"]
+    range: float | None = Field(description="Full scale of the present range in unit. None for functions without ranges.")
+    auto_range: bool | None = Field(description="True for autorange. None if not known.")
     speed: Speed | None = Field(description="Measurement rate. None for functions without a rate setting.")
     available_ranges: list[float] = Field(description="Full scale of each range in unit")
 
@@ -110,8 +115,9 @@ class RigolDM3058:
     def __init__(self, resource: SCPIResource, sleep: Callable[[float], None] = time.sleep):
         self._res = resource
         self._sleep = sleep
-        # The instrument has no query for auto or manual range. The driver remembers it.
-        self._auto_range = True
+        # The instrument has no query for auto or manual range. The driver remembers the
+        # last state that it set. Before that, the state is unknown (front panel).
+        self._auto_range: bool | None = None
         if self._res.query("CMDSET?").strip().upper() != "RIGOL":
             self._res.write("CMDSET RIGOL")
 
@@ -156,7 +162,7 @@ class RigolDM3058:
             self._res.write(f":FUNCtion:{spec.scpi}")
         if spec.ranges:
             if index is None:
-                if not self._auto_range or changed:
+                if self._auto_range is not True or changed:
                     self._res.write(":MEASure AUTO")
                 self._auto_range = True
             else:
@@ -164,8 +170,6 @@ class RigolDM3058:
                 self._auto_range = False  # setting a range selects manual range
         if speed is not None:
             self._res.write(f":RATE:{spec.scpi} {_RATE_CODES[speed]}")
-        if changed or index is not None:
-            self._sleep(SETTLE_TIME_S)
         return self.configuration()
 
     def configuration(self) -> DMMConfiguration:
@@ -176,8 +180,16 @@ class RigolDM3058:
             speed = _RATE_NAMES.get(self._res.query(f":RATE:{spec.scpi}?").strip().upper()[:1])
         return DMMConfiguration(
             function=function, unit=spec.unit, range=self._current_range(function),
+            auto_range=self._auto_range if spec.ranges else None,
             speed=speed, available_ranges=list(spec.ranges),
         )
+
+    def estimated_reading_time(self) -> float:
+        """Approximate time for one reading with the present configuration, in s."""
+        cfg = self.configuration()
+        if cfg.function in ("frequency", "period"):
+            return SLOW_FUNCTION_READING_TIME_S
+        return READING_TIME_S[cfg.speed]
 
     # -- measurement ---------------------------------------------------
 
@@ -188,7 +200,7 @@ class RigolDM3058:
         value, overload = _parse_value(self._res.query(f":MEASure:{spec.scpi}?"))
         return DMMReading(
             function=function, value=value, unit=spec.unit, overload=overload,
-            range=self._current_range(function),
+            range=self._current_range(function), auto_range=self._auto_range if spec.ranges else None,
         )
 
     def measure(
@@ -226,10 +238,11 @@ class RigolDM3058:
 
     # -- helpers -------------------------------------------------------
 
-    def _current_range(self, function: str) -> float | Literal["auto"]:
+    def _current_range(self, function: str) -> float | None:
+        """The range that the instrument uses. With autorange, the range that it selected (tested)."""
         spec = FUNCTIONS[function]
-        if not spec.ranges or self._auto_range:
-            return "auto"
+        if not spec.ranges:
+            return None
         index = int(float(self._res.query(f":MEASure:{spec.scpi}:RANGe?")))
         return spec.ranges[index]
 
