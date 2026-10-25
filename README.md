@@ -1,5 +1,7 @@
 # rigol-mcp
 
+[![Tests](https://github.com/risqyy/rigol-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/risqyy/rigol-mcp/actions/workflows/tests.yml)
+
 rigol-mcp is an MCP server for Rigol laboratory instruments.
 An AI assistant can use this server to control the instruments.
 The server uses SCPI commands through VISA (pyvisa and pyvisa-py).
