@@ -35,23 +35,73 @@ Supported instruments:
    poetry install
    ```
 
+## Start the server
+
+Start the server:
+
+```bash
+poetry run rigol-mcp
+```
+
+The server uses Streamable HTTP at this URL:
+
+```text
+http://127.0.0.1:10765/mcp
+```
+
+The server needs no other configuration.
+
+### Options
+
+| Option              | Default     | Function                                          |
+|---------------------|-------------|---------------------------------------------------|
+| `--port`            | `10765`     | Set the HTTP port.                                |
+| `--host`            | `127.0.0.1` | Set the HTTP address.                             |
+| `--transport stdio` | `http`      | Use stdio instead of HTTP.                        |
+
+**WARNING:** The server has no authentication. Each person who can connect to the server can switch the outputs.
+By default, the server accepts only connections from the same computer.
+Use `--host 0.0.0.0` only in a network that you trust.
+
 ## Connect the server to an MCP client
 
-Add this entry to the MCP configuration of your client (for example, Claude Desktop or Claude Code).
-Replace `/path/to/rigol-mcp` with the path of your project directory.
+### Claude Code
+
+Add the server:
+
+```bash
+claude mcp add --transport http rigol http://127.0.0.1:10765/mcp
+```
+
+### Other clients (HTTP)
+
+Add this entry to the MCP configuration of your client:
+
+```json
+{
+  "mcpServers": {
+    "rigol": {
+      "type": "http",
+      "url": "http://127.0.0.1:10765/mcp"
+    }
+  }
+}
+```
+
+### Clients that support only stdio
+
+The client starts the server. Replace `/path/to/rigol-mcp` with the path of your project directory.
 
 ```json
 {
   "mcpServers": {
     "rigol": {
       "command": "poetry",
-      "args": ["-C", "/path/to/rigol-mcp", "run", "rigol-mcp"]
+      "args": ["-C", "/path/to/rigol-mcp", "run", "rigol-mcp", "--transport", "stdio"]
     }
   }
 }
 ```
-
-The server needs no other configuration.
 
 ## Automatic discovery
 

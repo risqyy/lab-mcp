@@ -1,5 +1,6 @@
 """MCP server for Rigol instruments.
 
+By default, the server uses Streamable HTTP at http://127.0.0.1:10765/mcp.
 The server needs no configuration. At the first tool call, it finds the DP832
 automatically on USB or on the LAN (see ``rigol_mcp.discovery``). If the connection
 is lost, the server finds the instrument again at the next tool call.
@@ -7,6 +8,7 @@ is lost, the server finds the instrument again at the next tool call.
 
 from __future__ import annotations
 
+import argparse
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -24,6 +26,9 @@ from rigol_mcp.instruments.dp832 import DP832, ChannelStatus, Measurement
 
 DP832_MODELS = {"DP832", "DP832A"}
 IO_TIMEOUT_MS = 5000
+# The server has no authentication. Thus it accepts only local connections by default.
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 10765
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
@@ -260,8 +265,23 @@ def dp832_clear_protection(channel: DP832Channel) -> ChannelStatus:
         return dev.status(channel)
 
 
-def main() -> None:
-    mcp.run()
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="rigol-mcp", description="MCP server for Rigol instruments.")
+    parser.add_argument(
+        "--transport", choices=["http", "stdio"], default="http",
+        help="MCP transport (default: http, Streamable HTTP)",
+    )
+    parser.add_argument(
+        "--host", default=DEFAULT_HOST,
+        help=f"HTTP address (default: {DEFAULT_HOST}). Use 0.0.0.0 for access from the network.",
+    )
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"HTTP port (default: {DEFAULT_PORT})")
+    args = parser.parse_args(argv)
+
+    if args.transport == "stdio":
+        mcp.run()
+    else:
+        mcp.run("streamable-http", host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

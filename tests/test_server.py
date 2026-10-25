@@ -141,3 +141,18 @@ def test_input_schema_exposes_limits() -> None:
     assert props["channel"]["minimum"] == 1 and props["channel"]["maximum"] == 3
     voltage = next(s for s in props["voltage"]["anyOf"] if s.get("type") == "number")
     assert voltage["maximum"] == 30
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        ([], (("streamable-http",), {"host": "127.0.0.1", "port": 10765})),
+        (["--host", "0.0.0.0", "--port", "9000"], (("streamable-http",), {"host": "0.0.0.0", "port": 9000})),
+        (["--transport", "stdio"], ((), {})),
+    ],
+)
+def test_main_transport_arguments(argv: list[str], expected, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    monkeypatch.setattr(server.mcp, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
+    server.main(argv)
+    assert calls == [expected]
