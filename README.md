@@ -1,62 +1,121 @@
 # rigol-mcp
 
-MCP-Server zur Steuerung von Rigol-Laborgeräten über SCPI/VISA (pyvisa + pyvisa-py).
-Erstes unterstütztes Gerät: **DP832 / DP832A** Netzteil.
+rigol-mcp is an MCP server for Rigol laboratory instruments.
+An AI assistant can use this server to control the instruments.
+The server uses SCPI commands through VISA (pyvisa and pyvisa-py).
+
+Supported instruments:
+
+| Instrument     | Type                                 |
+|----------------|--------------------------------------|
+| DP832, DP832A  | DC power supply with three outputs   |
+
+## Requirements
+
+- Python 3.10 or later
+- [Poetry](https://python-poetry.org/) 2.x
 
 ## Installation
 
-```bash
-poetry install
-```
+1. Clone the repository:
 
-Für USB-TMC zusätzlich `poetry install -E usb` (braucht libusb bzw. unter Windows einen WinUSB/libusb-Treiber).
-LAN (`TCPIP::<ip>::INSTR`) funktioniert mit pyvisa-py ohne weitere Treiber.
+   ```bash
+   git clone https://github.com/risqyy/rigol-mcp.git
+   ```
 
-## Konfiguration
+2. Go to the project directory:
 
-| Variable                | Bedeutung                                              | Default |
-|-------------------------|--------------------------------------------------------|---------|
-| `RIGOL_DP832_RESOURCE`  | VISA-Adresse, z. B. `TCPIP::192.168.1.50::INSTR`       | –       |
-| `RIGOL_VISA_BACKEND`    | pyvisa-Backend (`@py` = pyvisa-py, `""` = NI-VISA)     | `@py`   |
-| `RIGOL_VISA_TIMEOUT_MS` | I/O-Timeout                                            | `5000`  |
+   ```bash
+   cd rigol-mcp
+   ```
 
-Ohne `RIGOL_DP832_RESOURCE` kann die Verbindung zur Laufzeit per Tool `dp832_connect` aufgebaut werden.
+3. Install the dependencies:
 
-## Einbinden in Claude Code / Claude Desktop
+   ```bash
+   poetry install
+   ```
+
+## Connect the server to an MCP client
+
+Add this entry to the MCP configuration of your client (for example, Claude Desktop or Claude Code).
+Replace `/path/to/rigol-mcp` with the path of your project directory.
 
 ```json
 {
   "mcpServers": {
     "rigol": {
       "command": "poetry",
-      "args": ["-C", "C:/Users/mail/Documents/Work/risqyy/rigol-mcp", "run", "rigol-mcp"],
-      "env": { "RIGOL_DP832_RESOURCE": "TCPIP::192.168.1.50::INSTR" }
+      "args": ["-C", "/path/to/rigol-mcp", "run", "rigol-mcp"]
     }
   }
 }
 ```
 
+The server needs no other configuration.
+
+## Automatic discovery
+
+The server finds the instrument automatically at the first tool call.
+You do not need to know the VISA address.
+
+The server does these steps:
+
+1. It searches all available VISA backends.
+   It uses an installed IVI VISA (for example, NI-VISA) first, then pyvisa-py.
+2. It examines USB devices with the Rigol vendor ID (0x1AB1).
+3. It examines LAN instruments that answer the VXI-11 broadcast.
+4. If it finds no instrument, it scans the local networks for TCP port 5555.
+   It scans only private networks, and only the /24 network of each interface.
+5. It sends `*IDN?` to each candidate. It uses only instruments that identify as DP832 or DP832A.
+
+If the instrument does not answer, the server closes the connection.
+At the next tool call, the server finds the instrument again.
+
+If there is more than one DP832, the server uses the DP832 with the lowest serial number.
+To use a different DP832, use the tool `dp832_connect` with the serial number.
+
 ## Tools
 
-| Tool                     | Funktion                                                     |
-|--------------------------|--------------------------------------------------------------|
-| `list_visa_resources`    | Sichtbare VISA-Geräte auflisten                              |
-| `dp832_connect`          | Verbindung zu einer Adresse aufbauen, liefert `*IDN?`        |
-| `dp832_identify`         | `*IDN?`                                                      |
-| `dp832_status`           | Ausgang, Sollwerte, OVP/OCP, CV/CC je Kanal                  |
-| `dp832_measure`          | Ist-Spannung, -Strom, -Leistung                              |
-| `dp832_set`              | Spannung und/oder Strombegrenzung setzen                     |
-| `dp832_output`           | Ausgang ein/aus                                              |
-| `dp832_all_off`          | Alle Ausgänge aus                                            |
-| `dp832_set_protection`   | OVP/OCP konfigurieren                                        |
-| `dp832_clear_protection` | Ausgelöste OVP/OCP zurücksetzen                              |
+| Tool                     | Function                                                         |
+|--------------------------|------------------------------------------------------------------|
+| `discover_instruments`   | Find all Rigol instruments on USB and on the LAN.                |
+| `dp832_connect`          | Connect to a DP832 by serial number or by VISA address.          |
+| `dp832_identify`         | Show the address, model, serial number and firmware.             |
+| `dp832_status`           | Read the output state, setpoints, OVP, OCP and CV/CC mode.       |
+| `dp832_measure`          | Measure the voltage, current and power of the outputs.           |
+| `dp832_set`              | Set the voltage and the current limit of one channel.            |
+| `dp832_output`           | Switch the output of one channel on or off.                      |
+| `dp832_all_off`          | Switch all outputs off.                                          |
+| `dp832_set_protection`   | Set the over-voltage protection (OVP) and over-current protection (OCP). |
+| `dp832_clear_protection` | Reset a tripped OVP or OCP.                                      |
 
-Sollwerte werden vor dem Senden gegen die Kanalgrenzen geprüft (CH1/CH2: 30 V / 3 A, CH3: 5 V / 3 A).
+## Safety
 
-## Tests
+The server examines each value before it sends the value to the instrument.
+The server does not send values that are out of range.
+
+| Channel | Voltage   | Current  | OVP max. | OCP max. |
+|---------|-----------|----------|----------|----------|
+| CH1     | 0 to 30 V | 0 to 3 A | 33 V     | 3.3 A    |
+| CH2     | 0 to 30 V | 0 to 3 A | 33 V     | 3.3 A    |
+| CH3     | 0 to 5 V  | 0 to 3 A | 5.5 V    | 3.3 A    |
+
+**WARNING:** The AI assistant can switch the outputs on. Disconnect sensitive loads before you use the server.
+
+## Troubleshooting
+
+| Problem                                   | Solution                                                                 |
+|-------------------------------------------|--------------------------------------------------------------------------|
+| The server does not find a USB instrument | Install a USB-TMC driver. Use NI-VISA, or use WinUSB on Windows (for example, with Zadig). |
+| The server does not find a LAN instrument | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
+| The server finds the wrong instrument     | Use `discover_instruments`. Then use `dp832_connect` with the serial number. |
+
+## Development
+
+Run the tests:
 
 ```bash
 poetry run pytest
 ```
 
-Die Tests laufen gegen ein simuliertes DP832 (`tests/fake_dp832.py`), es wird keine Hardware benötigt.
+The tests use a simulated DP832 (`tests/fake_dp832.py`). You do not need an instrument for the tests.

@@ -9,11 +9,12 @@ dependencies = [
     "pydantic (>=2.14,<3)",
     "pyvisa (>=1.16,<2)",
     "pyvisa-py (>=0.8,<1)",
+    # VXI-11 broadcast on all network interfaces, and the LAN scan fallback
+    "psutil (>=7)",
+    # USB-TMC; libusb-package contains the libusb library, so no system install is necessary
+    "pyusb (>=1.3)",
+    "libusb-package (>=1.0.26)",
 ]
-
-[project.optional-dependencies]
-# USB-TMC via pyvisa-py additionally needs libusb on the system.
-usb = ["pyusb (>=1.3)"]
 
 [project.scripts]
 rigol-mcp = "rigol_mcp.server:main"

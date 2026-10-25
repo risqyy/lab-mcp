@@ -1,7 +1,7 @@
-"""SCPI driver for the Rigol DP832 / DP832A triple-output DC power supply.
+"""SCPI driver for the Rigol DP832 and DP832A DC power supply with three outputs.
 
-Only depends on a pyvisa-style resource (``write`` / ``query``), so it can be
-tested with a fake resource and does not care whether LAN, USB or serial is used.
+The driver needs only a resource with ``write`` and ``query`` (for example, a pyvisa
+resource). The driver works the same on USB and on the LAN. The tests use a simulated resource.
 """
 
 from __future__ import annotations

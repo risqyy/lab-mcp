@@ -18,6 +18,9 @@ class FakeDP832Resource:
         }
         self.load_ohms = 10.0
 
+    def close(self) -> None:
+        pass
+
     def write(self, msg: str) -> None:
         self.writes.append(msg)
         if m := re.fullmatch(r":SOUR(\d):(VOLT|CURR) ([\d.]+)", msg):
