@@ -1,8 +1,8 @@
-# rigol-mcp
+# lab-mcp
 
-[![Tests](https://github.com/risqyy/rigol-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/risqyy/rigol-mcp/actions/workflows/tests.yml)
+[![Tests](https://github.com/risqyy/lab-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/risqyy/lab-mcp/actions/workflows/tests.yml)
 
-rigol-mcp is an MCP server for Rigol laboratory instruments.
+lab-mcp is an MCP server for Rigol laboratory instruments.
 An AI assistant can use this server to control the instruments.
 The server uses SCPI commands through VISA (pyvisa and pyvisa-py).
 
@@ -26,13 +26,13 @@ The LAN connection is not tested on a real instrument.
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/risqyy/rigol-mcp.git
+   git clone https://github.com/risqyy/lab-mcp.git
    ```
 
 2. Go to the project directory:
 
    ```bash
-   cd rigol-mcp
+   cd lab-mcp
    ```
 
 3. Install the dependencies:
@@ -46,7 +46,7 @@ The LAN connection is not tested on a real instrument.
 Start the server:
 
 ```bash
-poetry run rigol-mcp
+poetry run lab-mcp
 ```
 
 The server uses Streamable HTTP at this URL:
@@ -96,14 +96,14 @@ Add this entry to the MCP configuration of your client:
 
 ### Clients that support only stdio
 
-The client starts the server. Replace `/path/to/rigol-mcp` with the path of your project directory.
+The client starts the server. Replace `/path/to/lab-mcp` with the path of your project directory.
 
 ```json
 {
   "mcpServers": {
     "rigol": {
       "command": "poetry",
-      "args": ["-C", "/path/to/rigol-mcp", "run", "rigol-mcp", "--transport", "stdio"]
+      "args": ["-C", "/path/to/lab-mcp", "run", "lab-mcp", "--transport", "stdio"]
     }
   }
 }

@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from rigol_mcp import discovery
-from rigol_mcp.discovery import DiscoveredInstrument
+from lab_mcp import discovery
+from lab_mcp.discovery import DiscoveredInstrument
 
 
 def inst(address: str, serial: str, model: str = "DP832", manufacturer: str = "RIGOL TECHNOLOGIES"):

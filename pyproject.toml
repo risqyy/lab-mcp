@@ -1,7 +1,7 @@
 [project]
-name = "rigol-mcp"
+name = "lab-mcp"
 version = "0.1.0"
-description = "MCP server for controlling Rigol lab instruments (starting with the DP832 power supply)"
+description = "MCP server for laboratory instruments (Rigol DP832, Manson HCS series)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,13 +14,15 @@ dependencies = [
     # USB-TMC; libusb-package contains the libusb library, so no system install is necessary
     "pyusb (>=1.3)",
     "libusb-package (>=1.0.26)",
+    # Manson HCS power supplies (USB virtual COM port)
+    "pyserial (>=3.5)",
 ]
 
 [project.scripts]
-rigol-mcp = "rigol_mcp.server:main"
+lab-mcp = "lab_mcp.server:main"
 
 [tool.poetry]
-packages = [{ include = "rigol_mcp", from = "src" }]
+packages = [{ include = "lab_mcp", from = "src" }]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=9.1"

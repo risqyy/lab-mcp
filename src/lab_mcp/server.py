@@ -2,7 +2,7 @@
 
 By default, the server uses Streamable HTTP at http://127.0.0.1:10765/mcp.
 The server needs no configuration. At the first tool call, it finds the DP832
-automatically on USB or on the LAN (see ``rigol_mcp.discovery``). If the connection
+automatically on USB or on the LAN (see ``lab_mcp.discovery``). If the connection
 is lost, the server finds the instrument again at the next tool call.
 """
 
@@ -20,9 +20,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import Field
 
-from rigol_mcp import discovery
-from rigol_mcp.discovery import DiscoveredInstrument
-from rigol_mcp.instruments.dp832 import DP832, ChannelStatus, Measurement
+from lab_mcp import discovery
+from lab_mcp.discovery import DiscoveredInstrument
+from lab_mcp.instruments.dp832 import DP832, ChannelStatus, Measurement
 
 DP832_MODELS = {"DP832", "DP832A"}
 IO_TIMEOUT_MS = 5000
@@ -33,7 +33,7 @@ DEFAULT_PORT = 10765
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
 mcp = MCPServer(
-    "rigol-mcp",
+    "lab-mcp",
     instructions=(
         "This server controls a Rigol DP832 DC power supply with three outputs. "
         "CH1 and CH2: 0-30 V, 0-3 A. CH3: 0-5 V, 0-3 A. "
@@ -271,7 +271,7 @@ def dp832_clear_protection(channel: DP832Channel) -> ChannelStatus:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="rigol-mcp", description="MCP server for Rigol instruments.")
+    parser = argparse.ArgumentParser(prog="lab-mcp", description="MCP server for Rigol instruments.")
     parser.add_argument(
         "--transport", choices=["http", "stdio"], default="http",
         help="MCP transport (default: http, Streamable HTTP)",

@@ -5,9 +5,9 @@ import pytest
 import pyvisa
 from mcp.server.mcpserver.exceptions import ToolError
 
-from rigol_mcp import server
-from rigol_mcp.discovery import DiscoveredInstrument
-from rigol_mcp.instruments import DP832
+from lab_mcp import server
+from lab_mcp.discovery import DiscoveredInstrument
+from lab_mcp.instruments import DP832
 
 from fake_dp832 import FakeDP832Resource
 
