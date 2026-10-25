@@ -21,6 +21,7 @@ class FakeHCSTransport:
         self.output = False
         self.presets = [(5.0, 1.0), (12.0, 2.0), (24.0, 3.0)]
         self.load_ohms = 10.0
+        self.pending_preset: int | None = None
         self.closed = False
 
     def _fmt(self, value: float) -> str:
@@ -51,16 +52,31 @@ class FakeHCSTransport:
             if len(m[2]) != self.digits:
                 raise AssertionError(f"wrong number of digits in {command!r}")
             value = int(m[2]) / self.scale
+            # Like the real HCS-3404: no reply to a setpoint above the upper limit.
+            if (m[1] == "VOLT" and value > self.upper_voltage) or (m[1] == "CURR" and value > self.upper_current):
+                raise TimeoutError(f"No reply to {command}")
             attr = {"VOLT": "voltage", "CURR": "current", "SOVP": "upper_voltage", "SOCP": "upper_current"}[m[1]]
             setattr(self, attr, value)
+            if m[1] in ("SOVP", "SOCP") and self.pending_preset is not None:
+                self._run_preset(self.pending_preset)
             return None
         if m := re.fullmatch(r"SOUT([01])", command):
             self.output = m[1] == "0"  # inverted logic
             return None
         if m := re.fullmatch(r"RUNM([0-2])", command):
-            self.voltage, self.current = self.presets[int(m[1])]
+            self._run_preset(int(m[1]))
             return None
         raise AssertionError(f"unexpected command {command!r}")
+
+    def _run_preset(self, index: int) -> None:
+        # Like the real HCS-3404: a preset above the upper limits is kept and
+        # loaded later, when the upper limits increase.
+        v, i = self.presets[index]
+        if v > self.upper_voltage or i > self.upper_current:
+            self.pending_preset = index
+        else:
+            self.voltage, self.current = v, i
+            self.pending_preset = None
 
     def close(self) -> None:
         self.closed = True

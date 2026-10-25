@@ -56,8 +56,8 @@ DP832_HINT = (
     "For LAN, connect the instrument to the same network as this computer."
 )
 HCS_HINT = (
-    "Connect the USB cable. Make sure that Windows shows a COM port for the instrument "
-    "(Silicon Labs CP210x driver)."
+    "Set the MODE switch on the rear panel to Normal. Connect the USB cable. "
+    "Make sure that Windows shows a COM port for the instrument (Silicon Labs CP210x driver)."
 )
 
 
@@ -213,9 +213,10 @@ OcpAmps = Annotated[float, Field(ge=0, le=3.3, description="OCP level in A")]
 VisaAddress = Annotated[
     str, Field(pattern=r"^\S+::\S+$", description="VISA address, for example TCPIP0::192.0.2.10::INSTR")
 ]
-# Limits for all HCS models. The driver also checks the limits of the connected model (GMAX).
-HcsVolts = Annotated[float, Field(ge=0, le=60, description="Voltage in V (limit of the model: see hcs_status)")]
-HcsAmps = Annotated[float, Field(ge=0, le=40, description="Current in A (limit of the model: see hcs_status)")]
+# No fixed maximum: the limits of each HCS model come from the instrument (GMAX),
+# and they can be higher than the datasheet (HCS-3404: 60.5 V / 11.0 A). The driver checks them.
+HcsVolts = Annotated[float, Field(ge=0, description="Voltage in V (limit of the model: see hcs_status)")]
+HcsAmps = Annotated[float, Field(ge=0, description="Current in A (limit of the model: see hcs_status)")]
 SerialPort = Annotated[str, Field(min_length=1, description="Serial port, for example COM7 or /dev/ttyUSB0")]
 
 
@@ -398,6 +399,8 @@ def hcs_measure() -> HCSMeasurement:
     """Measure the output voltage (V) and current (A), and read the CV/CC mode.
 
     After you change a setpoint or the output, wait 1 s before you measure.
+    The instrument cannot decrease the output voltage without a load. Without a load, the voltage
+    decreases slowly after you decrease the setpoint or switch the output off.
     """
     with _guard(hcs):
         return hcs.device().measure()
@@ -405,7 +408,10 @@ def hcs_measure() -> HCSMeasurement:
 
 @mcp.tool()
 def hcs_set(voltage: HcsVolts | None = None, current: HcsAmps | None = None) -> HCSStatus:
-    """Set the voltage (V), the current limit (A) or both. The output state does not change."""
+    """Set the voltage (V), the current limit (A) or both. The output state does not change.
+
+    The values must not be above the upper limits (see hcs_status).
+    """
     with _guard(hcs):
         dev = hcs.device()
         if voltage is not None:
@@ -445,7 +451,11 @@ def hcs_presets() -> list[HCSPreset]:
 
 @mcp.tool(annotations=ToolAnnotations(destructive_hint=True))
 def hcs_load_preset(index: Annotated[int, Field(ge=0, le=2, description="Preset 0 to 2")]) -> HCSStatus:
-    """Load one preset memory into the setpoints. If the output is on, the output changes immediately."""
+    """Load one preset memory into the setpoints. If the output is on, the output changes immediately.
+
+    The preset must not be above the upper limits. The server refuses such a preset,
+    because the instrument keeps it and loads it later, when the upper limit increases.
+    """
     with _guard(hcs):
         dev = hcs.device()
         dev.load_preset(index)

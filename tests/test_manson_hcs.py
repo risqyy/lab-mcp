@@ -32,7 +32,7 @@ def test_four_digit_format() -> None:
 def test_set_voltage_and_current_encoding(dev: MansonHCS, t: FakeHCSTransport) -> None:
     dev.set_voltage(12.3)
     dev.set_current(2.5)
-    assert t.commands[-2:] == ["VOLT123", "CURR025"]
+    assert [c for c in t.commands if c.startswith(("VOLT", "CURR"))] == ["VOLT123", "CURR025"]
     assert dev.get_setpoints() == (12.3, 2.5)
 
 
@@ -88,6 +88,34 @@ def test_presets(dev: MansonHCS) -> None:
     assert dev.get_setpoints() == (12.0, 2.0)
     with pytest.raises(ValueError):
         dev.load_preset(3)
+
+
+def test_setpoint_above_upper_limit_is_not_sent(dev: MansonHCS, t: FakeHCSTransport) -> None:
+    # The real instrument does not reply to such a command.
+    dev.set_upper_limits(volts=20.0, amps=2.0)
+    for setter, value in ((dev.set_voltage, 25.0), (dev.set_current, 3.0)):
+        with pytest.raises(ValueError, match="above the upper limit"):
+            setter(value)
+    assert not any(c.startswith(("VOLT", "CURR")) for c in t.commands)
+
+
+def test_preset_above_upper_limit_is_not_sent(dev: MansonHCS, t: FakeHCSTransport) -> None:
+    # The real instrument keeps such a command and loads the preset later,
+    # when the upper limit increases. The driver must not send it.
+    dev.set_voltage(3.0)
+    dev.set_current(0.5)
+    dev.set_upper_limits(amps=2.0)
+    with pytest.raises(ValueError, match="preset 2 current 3.0 A is above the upper limit 2.0 A"):
+        dev.load_preset(2)  # 24 V / 3 A
+    assert not any(c.startswith("RUNM") for c in t.commands)
+    dev.set_upper_limits(amps=10.0)
+    assert dev.get_setpoints() == (3.0, 0.5)
+
+
+def test_preset_not_loaded_is_detected(dev: MansonHCS, t: FakeHCSTransport, monkeypatch) -> None:
+    monkeypatch.setattr(t, "_run_preset", lambda index: None)
+    with pytest.raises(HCSProtocolError, match="did not load preset 1"):
+        dev.load_preset(1)
 
 
 def test_status(dev: MansonHCS) -> None:

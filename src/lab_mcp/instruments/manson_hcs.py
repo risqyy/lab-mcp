@@ -115,12 +115,19 @@ class MansonHCS:
 
     # -- setpoints -------------------------------------------------------
 
+    # The instrument does not reply to a setpoint above its upper limit (SOVP/SOCP).
+    # Thus the driver examines the upper limits before it sends a setpoint.
+
     def set_voltage(self, volts: float) -> None:
         _check_range("voltage", volts, self.limits.max_voltage, "V")
+        upper_v, _ = self.get_upper_limits()
+        _check_upper("voltage", volts, upper_v, "V")
         self._t.request("VOLT" + self._encode(volts))
 
     def set_current(self, amps: float) -> None:
         _check_range("current", amps, self.limits.max_current, "A")
+        _, upper_a = self.get_upper_limits()
+        _check_upper("current", amps, upper_a, "A")
         self._t.request("CURR" + self._encode(amps))
 
     def get_setpoints(self) -> tuple[float, float]:
@@ -172,9 +179,21 @@ class MansonHCS:
         return [HCSPreset(index=i, voltage=values[2 * i], current=values[2 * i + 1]) for i in range(PRESET_COUNT)]
 
     def load_preset(self, index: int) -> None:
+        """Load a preset into the setpoints.
+
+        If a preset is above the upper limits, the instrument does not load it, but it
+        keeps the command. It loads the preset later, when the upper limit increases.
+        Thus the driver does not send RUNM for such a preset.
+        """
         if not 0 <= index < PRESET_COUNT:
             raise ValueError(f"Invalid preset {index}; valid presets are 0 to {PRESET_COUNT - 1}")
+        preset = self.get_presets()[index]
+        upper_v, upper_a = self.get_upper_limits()
+        _check_upper(f"preset {index} voltage", preset.voltage, upper_v, "V")
+        _check_upper(f"preset {index} current", preset.current, upper_a, "A")
         self._t.request(f"RUNM{index}")
+        if self.get_setpoints() != (preset.voltage, preset.current):
+            raise HCSProtocolError(f"The instrument did not load preset {index}")
 
     def status(self) -> HCSStatus:
         voltage, current = self.get_setpoints()
@@ -228,3 +247,11 @@ def _parse_limits(data: str) -> HCSLimits:
 def _check_range(name: str, value: float, maximum: float, unit: str) -> None:
     if not 0 <= value <= maximum:
         raise ValueError(f"{name} {value} {unit} out of range 0..{maximum} {unit}")
+
+
+def _check_upper(name: str, value: float, upper: float, unit: str) -> None:
+    if value > upper:
+        raise ValueError(
+            f"{name} {value} {unit} is above the upper limit {upper} {unit}. "
+            "Increase the upper limit with hcs_set_upper_limits first."
+        )

@@ -12,7 +12,7 @@ The server finds the instruments automatically. You do not need to configure add
 |--------------|------------------------------------|-----------------------|-----------|-----------------------------------------|
 | Rigol DP832  | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | Yes (USB, firmware 00.01.14)            |
 | Rigol DP832A | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
-| Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Partially (USB, read commands only)     |
+| Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
 
 "Tested" means that a test on a real instrument was done with all tools.
 The LAN connection is not tested on a real instrument.
@@ -195,10 +195,26 @@ Rigol DP832:
 
 Manson HCS: the server reads the limits from the instrument (`GMAX`).
 The HCS-3404 that was tested sends 60.5 V and 11.0 A.
-The tool schema accepts a maximum of 60 V and 40 A for all HCS models.
+The server also examines the upper limits (`SOVP`, `SOCP`) before it sends a setpoint or loads a preset.
 
 **CAUTION:** The HCS protocol cannot read the output state.
 The server shows the last state that it set. Before the first switch command, the state is unknown.
+
+**CAUTION:** The HCS-3404 keeps a preset that is above the upper limits. It loads the preset later,
+when the upper limit increases. If the output is on, the output changes without a command.
+Thus the server does not send such a preset.
+
+### Manson HCS: behavior of the instrument
+
+These items were found in a test with an HCS-3404:
+
+| Item                                          | Behavior                                                       |
+|-----------------------------------------------|----------------------------------------------------------------|
+| Setpoint above the upper limit                | The instrument does not reply. The server refuses the setpoint before it sends it. |
+| Preset above the upper limit                  | The instrument keeps the command and loads the preset later. The server refuses the preset. |
+| Decrease of the voltage without a load        | The voltage decreases slowly. The instrument cannot discharge the output. |
+| `GETD` with the output off                    | The instrument sends the actual output voltage, not the setpoint. |
+| MODE switch on the rear panel                 | USB control operates only in the position "Normal". In the position "Remote Ctrl", the instrument does not reply on USB. |
 
 **WARNING:** The AI assistant can switch the outputs on. Disconnect sensitive loads before you use the server.
 
@@ -208,7 +224,7 @@ The server shows the last state that it set. Before the first switch command, th
 |--------------------------------------------|--------------------------------------------------------------------------|
 | The server does not find a USB instrument  | Install a USB-TMC driver. Use NI-VISA, or use WinUSB on Windows (for example, with Zadig). |
 | The server does not find a LAN instrument  | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
-| The server does not find a Manson HCS      | Make sure that the operating system shows a COM port for the CP210x bridge. If not, install the Silicon Labs CP210x driver. Close other programs that use the port. |
+| The server does not find a Manson HCS      | Set the MODE switch on the rear panel to "Normal". Make sure that the instrument is on. Make sure that the operating system shows a COM port for the CP210x bridge. If not, install the Silicon Labs CP210x driver. Close other programs that use the port. |
 | The server finds the wrong instrument      | Use `discover_instruments`. Then use `dp832_connect` or `hcs_connect` with the serial number. |
 
 ## Development

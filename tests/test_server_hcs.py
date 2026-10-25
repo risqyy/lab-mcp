@@ -58,16 +58,26 @@ def test_hcs_set_output_measure(fake_hcs: FakeHCSTransport) -> None:
     assert (m["voltage"], m["current"], m["mode"]) == (12.0, 1.2, "CV")
 
 
-def test_hcs_limit_of_model_reaches_model() -> None:
-    # The schema allows up to 40 A (HCS family). The HCS-3404 allows 10 A.
+def test_hcs_limit_of_model_reaches_model(fake_hcs: FakeHCSTransport) -> None:
+    before = list(fake_hcs.commands)
     with pytest.raises(ToolError, match=r"out of range 0..10.0 A"):
         call("hcs_set", current=15.0)
+    with pytest.raises(ToolError, match=r"out of range 0..60.0 V"):
+        call("hcs_set", voltage=61.0)
+    assert fake_hcs.commands == before
 
 
-def test_hcs_schema_rejects_values_above_family_limit(fake_hcs: FakeHCSTransport) -> None:
+def test_hcs_limits_above_datasheet_are_accepted() -> None:
+    t = FakeHCSTransport(gmax="605110")  # the real HCS-3404 sends 60.5 V / 11.0 A
+    server.hcs.set(MansonHCS(t), HCS_INFO)
+    st = call("hcs_set_upper_limits", voltage=60.5, current=11.0).structured_content
+    assert (st["upper_voltage_limit"], st["upper_current_limit"]) == (60.5, 11.0)
+
+
+def test_hcs_schema_rejects_negative_values(fake_hcs: FakeHCSTransport) -> None:
     before = list(fake_hcs.commands)
     with pytest.raises(ToolError):
-        call("hcs_set", voltage=61.0)
+        call("hcs_set", voltage=-1.0)
     assert fake_hcs.commands == before
 
 
