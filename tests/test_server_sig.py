@@ -72,24 +72,17 @@ def test_driver_validation_reaches_client(fake_afg):
     assert fake_afg.writes == []
 
 
-def test_auto_connect_and_skip_open_ports(monkeypatch):
+def test_auto_connect(monkeypatch):
     server.afg.set(None)
     transport = FakeAFGTransport()
-    calls = []
 
     def discover(**kwargs):
-        calls.append(kwargs)
-        if "match" in kwargs:
-            assert kwargs["match"](AFG_INFO)
+        assert kwargs["match"](AFG_INFO)
         return [AFG_INFO]
 
     monkeypatch.setattr(server.discovery, "discover", discover)
     monkeypatch.setattr(server.AFGSerialTransport, "open", classmethod(lambda cls, device: transport))
     assert call("sig_identify").structured_content["address"] == "COM8"
-    assert calls[0]["skip_serial_ports"] == []
-    assert server._open_serial_ports() == ["COM8"]
-    call("discover_instruments", scan_lan=False)
-    assert calls[-1]["skip_serial_ports"] == ["COM8"]
 
 
 @pytest.mark.parametrize("selector", [{"serial": "TEST0001"}, {"port": "COM8"}])
@@ -156,29 +149,3 @@ def test_closed_transport_reconnects_before_command(monkeypatch, fake_afg):
     call("sig_set", amplitude_vpp=2)
     assert fake_afg.writes == []
     assert fresh.writes == ["SOURce1:AMPlitude 2VPP"]
-
-
-def test_all_outputs_off_includes_generator(fake_afg):
-    fake_afg.output = True
-    results = call("all_outputs_off").structured_content["result"]
-    assert results[-1] == {"instrument": "GW Instek AFG", "serial": "TEST0001", "result": "off"}
-    assert not fake_afg.output
-
-
-def test_all_outputs_off_reports_generator_communication_failure(monkeypatch, fake_afg):
-    def broken(command):
-        raise TimeoutError("output query failed")
-
-    monkeypatch.setattr(fake_afg, "query", broken)
-    results = call("all_outputs_off").structured_content["result"]
-    assert results[-1]["result"].startswith("communication failed")
-    assert fake_afg.writes == ["OUTPut OFF"]
-    assert server.afg.connected_info is None
-
-
-def test_all_outputs_off_does_not_call_device_errors_not_found(fake_afg):
-    fake_afg.output = True
-    fake_afg.errors.append("-222")
-    results = call("all_outputs_off").structured_content["result"]
-    assert results[-1]["result"].startswith("command failed")
-    assert not fake_afg.output

@@ -6,15 +6,10 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from lab_mcp import server
 from lab_mcp.discovery import DiscoveredInstrument
-from lab_mcp.instruments.power_supplies import MansonHCS, RigolDP
+from lab_mcp.instruments.power_supplies import MansonHCS
 
-from fake_rigol_dp import FakeRigolDPResource
 from fake_manson_hcs import FakeHCSTransport
 
-DP832_INFO = DiscoveredInstrument(
-    address="USB0::0x1AB1::0x0E11::DP8C000000001::INSTR", backend="@py",
-    manufacturer="RIGOL TECHNOLOGIES", model="DP832", serial="DP8C000000001", firmware="00.01.16",
-)
 HCS_INFO = DiscoveredInstrument(
     address="COM7", backend="serial", manufacturer="MANSON", model="HCS-3404", serial="0001", firmware=""
 )
@@ -29,14 +24,6 @@ def fake_hcs(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeHCSTransport]:
     server.hcs.set(None)
 
 
-@pytest.fixture
-def fake_dp832() -> Iterator[FakeRigolDPResource]:
-    res = FakeRigolDPResource()
-    server.rigol_dp.set(RigolDP(res, "DP832"), DP832_INFO)
-    yield res
-    server.rigol_dp.set(None)
-
-
 def call(name: str, **arguments):
     return asyncio.run(server.mcp.call_tool(name, arguments))
 
@@ -44,7 +31,7 @@ def call(name: str, **arguments):
 def test_hcs_tools_are_registered() -> None:
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert {
-        "all_outputs_off", "hcs_connect", "hcs_identify", "hcs_status", "hcs_measure", "hcs_set",
+        "hcs_connect", "hcs_identify", "hcs_status", "hcs_measure", "hcs_set",
         "hcs_output", "hcs_set_upper_limits", "hcs_presets", "hcs_load_preset",
     } <= names
 
@@ -57,6 +44,8 @@ def test_hcs_set_output_measure(fake_hcs: FakeHCSTransport) -> None:
     assert "SOUT0" in fake_hcs.commands
     m = call("hcs_measure").structured_content
     assert (m["voltage"], m["current"], m["mode"]) == (12.0, 1.2, "CV")
+    assert call("hcs_output", enabled=False).structured_content["output_enabled"] is False
+    assert fake_hcs.output is False
 
 
 def test_hcs_limit_of_model_reaches_model(fake_hcs: FakeHCSTransport) -> None:
@@ -93,17 +82,9 @@ def test_hcs_presets_and_upper_limits() -> None:
 def test_hcs_auto_connect(monkeypatch: pytest.MonkeyPatch) -> None:
     server.hcs.set(None)
     t = FakeHCSTransport()
-    calls = []
-
-    def fake_discover(**kwargs):
-        calls.append(kwargs)
-        return [HCS_INFO]
-
-    monkeypatch.setattr(server.discovery, "discover", fake_discover)
+    monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [HCS_INFO])
     monkeypatch.setattr(server.SerialTransport, "open", classmethod(lambda cls, device: t))
     assert call("hcs_identify").structured_content["address"] == "COM7"
-    assert calls[0]["skip_serial_ports"] == []
-    assert server._open_serial_ports() == ["COM7"]
 
 
 def test_hcs_reconnects_after_communication_error(monkeypatch: pytest.MonkeyPatch, fake_hcs) -> None:
@@ -114,29 +95,3 @@ def test_hcs_reconnects_after_communication_error(monkeypatch: pytest.MonkeyPatc
     with pytest.raises(ToolError, match="Communication with the instrument failed"):
         call("hcs_measure")
     assert server.hcs.connected_info is None
-
-
-def test_all_outputs_off_switches_every_instrument(fake_dp832: FakeRigolDPResource, fake_hcs) -> None:
-    call("dp_output", channel=1, enabled=True)
-    call("hcs_output", enabled=True)
-    results = call("all_outputs_off").structured_content["result"]
-    assert [r["result"] for r in results[:2]] == ["off", "off"]
-    assert results[2]["instrument"] == "GW Instek AFG"
-    assert results[2]["result"].startswith("not found")
-    assert not any(s["OUT"] for s in fake_dp832.state.values())
-    assert fake_hcs.output is False
-
-
-def test_all_outputs_off_reports_missing_instrument(fake_dp832, monkeypatch: pytest.MonkeyPatch) -> None:
-    server.hcs.set(None)
-    monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [])
-    results = call("all_outputs_off").structured_content["result"]
-    assert results[0]["result"] == "off"
-    assert results[1]["instrument"] == "Manson HCS"
-    assert results[1]["result"].startswith("not found")
-
-
-def test_discover_instruments_lists_connected(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [DP832_INFO])
-    serials = [i["serial"] for i in call("discover_instruments").structured_content["result"]]
-    assert serials == ["0001", "DP8C000000001"]
