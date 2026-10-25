@@ -6,9 +6,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from lab_mcp import server
 from lab_mcp.discovery import DiscoveredInstrument
-from lab_mcp.instruments.power_supplies import DP832, MansonHCS
+from lab_mcp.instruments.power_supplies import MansonHCS, RigolDP
 
-from fake_rigol_dp800 import FakeDP832Resource
+from fake_rigol_dp import FakeRigolDPResource
 from fake_manson_hcs import FakeHCSTransport
 
 DP832_INFO = DiscoveredInstrument(
@@ -29,11 +29,11 @@ def fake_hcs() -> Iterator[FakeHCSTransport]:
 
 
 @pytest.fixture
-def fake_dp832() -> Iterator[FakeDP832Resource]:
-    res = FakeDP832Resource()
-    server.dp832.set(DP832(res), DP832_INFO)
+def fake_dp832() -> Iterator[FakeRigolDPResource]:
+    res = FakeRigolDPResource()
+    server.rigol_dp.set(RigolDP(res, "DP832"), DP832_INFO)
     yield res
-    server.dp832.set(None)
+    server.rigol_dp.set(None)
 
 
 def call(name: str, **arguments):
@@ -115,8 +115,8 @@ def test_hcs_reconnects_after_communication_error(monkeypatch: pytest.MonkeyPatc
     assert server.hcs.connected_info is None
 
 
-def test_all_outputs_off_switches_every_instrument(fake_dp832: FakeDP832Resource, fake_hcs) -> None:
-    call("dp832_output", channel=1, enabled=True)
+def test_all_outputs_off_switches_every_instrument(fake_dp832: FakeRigolDPResource, fake_hcs) -> None:
+    call("dp_output", channel=1, enabled=True)
     call("hcs_output", enabled=True)
     results = call("all_outputs_off").structured_content["result"]
     assert [r["result"] for r in results] == ["off", "off"]
