@@ -291,3 +291,7 @@ tests/
 4. Add the tools to `tools/<category>.py`. If the module is new, import it at the end of `server.py`.
 5. Add a simulated instrument (`tests/<category>/fake_*.py`) and the tests. Add a new category folder to `tests/conftest.py`.
 6. Add the instrument to the device table in this README.
+
+## License
+
+lab-mcp uses the MIT License. Refer to [LICENSE](LICENSE).
