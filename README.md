@@ -4,11 +4,15 @@ rigol-mcp is an MCP server for Rigol laboratory instruments.
 An AI assistant can use this server to control the instruments.
 The server uses SCPI commands through VISA (pyvisa and pyvisa-py).
 
-Supported instruments:
+## Devices
 
-| Instrument     | Type                                 |
-|----------------|--------------------------------------|
-| DP832, DP832A  | DC power supply with three outputs   |
+| Device | Type                               | Supported | Tested                           |
+|--------|------------------------------------|-----------|----------------------------------|
+| DP832  | DC power supply with three outputs | Yes       | Yes (USB, firmware 00.01.14)     |
+| DP832A | DC power supply with three outputs | Yes       | No                               |
+
+"Tested" means that a test on a real instrument was done with all tools.
+The LAN connection is not tested on a real instrument.
 
 ## Requirements
 
