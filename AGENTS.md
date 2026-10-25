@@ -1,6 +1,9 @@
 # Agent instructions
 
 These instructions apply to the entire repository.
+They apply to all AI models and coding assistants, regardless of the provider or application.
+No specific model, assistant, extension, or integration is required.
+Use the available tools to complete the required workflow.
 
 ## Repository language
 
@@ -60,8 +63,16 @@ Add only the files for this issue, then commit and push the changes.
 git add <changed-files>
 git commit -m "Describe the change in English"
 git push -u origin docs/issue-123-short-description
+```
+
+Replace `<changed-files>` with the file paths.
+
+Open the pull request through the GitHub website, API, or an available tool.
+If the GitHub CLI is available, you can use this command:
+
+```sh
 gh pr create --base main --head docs/issue-123-short-description --title "Describe the change" --body-file <pr-body-file>
 ```
 
-Replace `<changed-files>` with the file paths. Replace `<pr-body-file>` with a file that contains the pull request description.
+Replace `<pr-body-file>` with a file that contains the pull request description.
 The description must include the checks and `Closes #123` for this example.
