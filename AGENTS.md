@@ -42,37 +42,3 @@ Always open a pull request with `main` as the base branch.
 6. Open a pull request against `main`.
    Describe the changes and the checks in English. Include `Closes #<number>` to link the issue.
    Give the user the pull request URL. Do not merge the pull request unless the user requests a merge.
-
-### Example commands
-
-This example is for a documentation change. Use the prefix that describes your change.
-Replace `123` and `short-description` with the issue number and a short description.
-Select a worktree path that does not already exist.
-Run the first two commands from an existing checkout of this repository.
-
-```sh
-git fetch origin main
-git worktree add -b docs/issue-123-short-description ../lab-mcp-issue-123 origin/main
-cd ../lab-mcp-issue-123
-```
-
-Make the changes and complete the applicable checks in the new worktree.
-Add only the files for this issue, then commit and push the changes.
-
-```sh
-git add <changed-files>
-git commit -m "Describe the change in English"
-git push -u origin docs/issue-123-short-description
-```
-
-Replace `<changed-files>` with the file paths.
-
-Open the pull request through the GitHub website, API, or an available tool.
-If the GitHub CLI is available, you can use this command:
-
-```sh
-gh pr create --base main --head docs/issue-123-short-description --title "Describe the change" --body-file <pr-body-file>
-```
-
-Replace `<pr-body-file>` with a file that contains the pull request description.
-The description must include the checks and `Closes #123` for this example.
