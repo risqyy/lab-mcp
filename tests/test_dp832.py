@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from rigol_mcp.instruments import DP832
+from lab_mcp.instruments import DP832
 
 from fake_dp832 import FakeDP832Resource
 

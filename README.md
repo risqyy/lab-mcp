@@ -1,20 +1,23 @@
-# rigol-mcp
+# lab-mcp
 
-[![Tests](https://github.com/risqyy/rigol-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/risqyy/rigol-mcp/actions/workflows/tests.yml)
+[![Tests](https://github.com/risqyy/lab-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/risqyy/lab-mcp/actions/workflows/tests.yml)
 
-rigol-mcp is an MCP server for Rigol laboratory instruments.
+lab-mcp is an MCP server for laboratory instruments.
 An AI assistant can use this server to control the instruments.
-The server uses SCPI commands through VISA (pyvisa and pyvisa-py).
+The server finds the instruments automatically. You do not need to configure addresses or ports.
 
 ## Devices
 
-| Device | Type                               | Supported | Tested                           |
-|--------|------------------------------------|-----------|----------------------------------|
-| DP832  | DC power supply with three outputs | Yes       | Yes (USB, firmware 00.01.14)     |
-| DP832A | DC power supply with three outputs | Yes       | No                               |
+| Device       | Type                               | Interface             | Supported | Tested                                  |
+|--------------|------------------------------------|-----------------------|-----------|-----------------------------------------|
+| Rigol DP832  | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | Yes (USB, firmware 00.01.14)            |
+| Rigol DP832A | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
+| Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
 
 "Tested" means that a test on a real instrument was done with all tools.
 The LAN connection is not tested on a real instrument.
+
+Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
 ## Requirements
 
@@ -26,13 +29,13 @@ The LAN connection is not tested on a real instrument.
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/risqyy/rigol-mcp.git
+   git clone https://github.com/risqyy/lab-mcp.git
    ```
 
 2. Go to the project directory:
 
    ```bash
-   cd rigol-mcp
+   cd lab-mcp
    ```
 
 3. Install the dependencies:
@@ -46,7 +49,7 @@ The LAN connection is not tested on a real instrument.
 Start the server:
 
 ```bash
-poetry run rigol-mcp
+poetry run lab-mcp
 ```
 
 The server uses Streamable HTTP at this URL:
@@ -76,7 +79,15 @@ Use `--host 0.0.0.0` only in a network that you trust.
 Add the server:
 
 ```bash
-claude mcp add --transport http rigol http://127.0.0.1:10765/mcp
+claude mcp add --transport http --scope user lab-mcp http://127.0.0.1:10765/mcp
+```
+
+### Codex
+
+Add the server:
+
+```bash
+codex mcp add lab-mcp --url http://127.0.0.1:10765/mcp
 ```
 
 ### Other clients (HTTP)
@@ -86,7 +97,7 @@ Add this entry to the MCP configuration of your client:
 ```json
 {
   "mcpServers": {
-    "rigol": {
+    "lab-mcp": {
       "type": "http",
       "url": "http://127.0.0.1:10765/mcp"
     }
@@ -96,14 +107,14 @@ Add this entry to the MCP configuration of your client:
 
 ### Clients that support only stdio
 
-The client starts the server. Replace `/path/to/rigol-mcp` with the path of your project directory.
+The client starts the server. Replace `/path/to/lab-mcp` with the path of your project directory.
 
 ```json
 {
   "mcpServers": {
-    "rigol": {
+    "lab-mcp": {
       "command": "poetry",
-      "args": ["-C", "/path/to/rigol-mcp", "run", "rigol-mcp", "--transport", "stdio"]
+      "args": ["-C", "/path/to/lab-mcp", "run", "lab-mcp", "--transport", "stdio"]
     }
   }
 }
@@ -111,8 +122,7 @@ The client starts the server. Replace `/path/to/rigol-mcp` with the path of your
 
 ## Automatic discovery
 
-The server finds the instrument automatically at the first tool call.
-You do not need to know the VISA address.
+At the first tool call for an instrument type, the server finds the instrument automatically.
 
 The server does these steps:
 
@@ -120,35 +130,62 @@ The server does these steps:
    It uses an installed IVI VISA (for example, NI-VISA) first, then pyvisa-py.
 2. It examines USB devices with the Rigol vendor ID (0x1AB1).
 3. It examines LAN instruments that answer the VXI-11 broadcast.
-4. If it finds no instrument, it scans the local networks for TCP port 5555.
+4. If steps 1 to 3 find no instrument, it scans the local networks for TCP port 5555.
    It scans only private networks, and only the /24 network of each interface.
-5. It sends `*IDN?` to each candidate. It uses only instruments that identify as DP832 or DP832A.
+5. It sends `*IDN?` to each VISA candidate.
+6. It examines the serial ports of Silicon Labs CP210x USB-serial bridges (USB ID 10C4:EA60).
+   It sends `GMOD` to each of these ports. It uses only instruments that identify as HCS.
+   The server does not send data to other serial ports.
 
-If the instrument does not answer, the server closes the connection.
+If an instrument does not answer, the server closes the connection.
 At the next tool call, the server finds the instrument again.
 
-If there is more than one DP832, the server uses the DP832 with the lowest serial number.
-To use a different DP832, use the tool `dp832_connect` with the serial number.
+If there is more than one instrument of a type, the server uses the instrument with the lowest serial number.
+To use a different instrument, use `dp832_connect` or `hcs_connect` with the serial number.
 
 ## Tools
 
+### All instruments
+
 | Tool                     | Function                                                         |
 |--------------------------|------------------------------------------------------------------|
-| `discover_instruments`   | Find all Rigol instruments on USB and on the LAN.                |
+| `discover_instruments`   | Find all supported instruments on USB, on the LAN and on serial ports. |
+| `all_outputs_off`        | Switch off all outputs of all instruments that the server finds. |
+
+### Rigol DP832
+
+| Tool                     | Function                                                         |
+|--------------------------|------------------------------------------------------------------|
 | `dp832_connect`          | Connect to a DP832 by serial number or by VISA address.          |
 | `dp832_identify`         | Show the address, model, serial number and firmware.             |
 | `dp832_status`           | Read the output state, setpoints, OVP, OCP and CV/CC mode.       |
 | `dp832_measure`          | Measure the voltage, current and power of the outputs.           |
 | `dp832_set`              | Set the voltage and the current limit of one channel.            |
 | `dp832_output`           | Switch the output of one channel on or off.                      |
-| `dp832_all_off`          | Switch all outputs off.                                          |
+| `dp832_all_off`          | Switch all outputs of the DP832 off.                             |
 | `dp832_set_protection`   | Set the over-voltage protection (OVP) and over-current protection (OCP). |
 | `dp832_clear_protection` | Reset a tripped OVP or OCP.                                      |
+
+### Manson HCS
+
+| Tool                     | Function                                                         |
+|--------------------------|------------------------------------------------------------------|
+| `hcs_connect`            | Connect to an HCS by USB serial number or by serial port.        |
+| `hcs_identify`           | Show the port, model and USB serial number.                      |
+| `hcs_status`             | Read the setpoints, the upper limits and the limits of the model. |
+| `hcs_measure`            | Measure the voltage and current, and read the CV/CC mode.        |
+| `hcs_set`                | Set the voltage and the current limit.                           |
+| `hcs_output`             | Switch the output on or off.                                     |
+| `hcs_set_upper_limits`   | Set the upper voltage limit and the upper current limit.         |
+| `hcs_presets`            | Read the three preset memories.                                  |
+| `hcs_load_preset`        | Load one preset memory into the setpoints.                       |
 
 ## Safety
 
 The server examines each value before it sends the value to the instrument.
 The server does not send values that are out of range.
+
+Rigol DP832:
 
 | Channel | Voltage   | Current  | OVP max. | OCP max. |
 |---------|-----------|----------|----------|----------|
@@ -156,15 +193,39 @@ The server does not send values that are out of range.
 | CH2     | 0 to 30 V | 0 to 3 A | 33 V     | 3.3 A    |
 | CH3     | 0 to 5 V  | 0 to 3 A | 5.5 V    | 3.3 A    |
 
+Manson HCS: the server reads the limits from the instrument (`GMAX`).
+The HCS-3404 that was tested sends 60.5 V and 11.0 A.
+The server also examines the upper limits (`SOVP`, `SOCP`) before it sends a setpoint or loads a preset.
+
+**CAUTION:** The HCS protocol cannot read the output state.
+The server shows the last state that it set. Before the first switch command, the state is unknown.
+
+**CAUTION:** The HCS-3404 keeps a preset that is above the upper limits. It loads the preset later,
+when the upper limit increases. If the output is on, the output changes without a command.
+Thus the server does not send such a preset.
+
+### Manson HCS: behavior of the instrument
+
+These items were found in a test with an HCS-3404:
+
+| Item                                          | Behavior                                                       |
+|-----------------------------------------------|----------------------------------------------------------------|
+| Setpoint above the upper limit                | The instrument does not reply. The server refuses the setpoint before it sends it. |
+| Preset above the upper limit                  | The instrument keeps the command and loads the preset later. The server refuses the preset. |
+| Decrease of the voltage without a load        | The voltage decreases slowly. The instrument cannot discharge the output. |
+| `GETD` with the output off                    | The instrument sends the actual output voltage, not the setpoint. |
+| MODE switch on the rear panel                 | USB control operates only in the position "Normal". In the position "Remote Ctrl", the instrument does not reply on USB. |
+
 **WARNING:** The AI assistant can switch the outputs on. Disconnect sensitive loads before you use the server.
 
 ## Troubleshooting
 
-| Problem                                   | Solution                                                                 |
-|-------------------------------------------|--------------------------------------------------------------------------|
-| The server does not find a USB instrument | Install a USB-TMC driver. Use NI-VISA, or use WinUSB on Windows (for example, with Zadig). |
-| The server does not find a LAN instrument | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
-| The server finds the wrong instrument     | Use `discover_instruments`. Then use `dp832_connect` with the serial number. |
+| Problem                                    | Solution                                                                 |
+|--------------------------------------------|--------------------------------------------------------------------------|
+| The server does not find a USB instrument  | Install a USB-TMC driver. Use NI-VISA, or use WinUSB on Windows (for example, with Zadig). |
+| The server does not find a LAN instrument  | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
+| The server does not find a Manson HCS      | Set the MODE switch on the rear panel to "Normal". Make sure that the instrument is on. Make sure that the operating system shows a COM port for the CP210x bridge. If not, install the Silicon Labs CP210x driver. Close other programs that use the port. |
+| The server finds the wrong instrument      | Use `discover_instruments`. Then use `dp832_connect` or `hcs_connect` with the serial number. |
 
 ## Development
 
@@ -174,4 +235,4 @@ Run the tests:
 poetry run pytest
 ```
 
-The tests use a simulated DP832 (`tests/fake_dp832.py`). You do not need an instrument for the tests.
+The tests use simulated instruments (`tests/fake_dp832.py`, `tests/fake_hcs.py`). You do not need an instrument for the tests.

@@ -1,14 +1,16 @@
-"""Zero-configuration discovery of Rigol instruments.
+"""Discovery of laboratory instruments without configuration.
 
-Discovery runs in two phases:
+Discovery has three phases:
 
-1. VISA enumeration on every usable backend (an installed IVI VISA such as NI-VISA
-   first, then pyvisa-py): USB-TMC devices with Rigol's vendor id and LAN devices
-   answering the VXI-11 broadcast.
-2. Fallback LAN scan of the local /24 networks for Rigol's raw SCPI port 5555, for
-   networks where the VXI-11 broadcast does not get through (Wi-Fi, VLANs, ...).
+1. VISA search on all usable backends (an installed IVI VISA, for example NI-VISA,
+   first, then pyvisa-py): USB-TMC devices with the Rigol vendor ID, and LAN
+   instruments that answer the VXI-11 broadcast. Each candidate gets ``*IDN?``.
+2. If phase 1 finds no instrument: a scan of the local /24 networks for TCP port 5555
+   (Rigol raw SCPI). This is for networks that block the VXI-11 broadcast.
+3. Serial ports of known USB-serial bridges (Manson HCS). Each candidate gets ``GMOD``.
+   Other serial ports are not used, because a probe sends data to the port.
 
-Every candidate is identified with ``*IDN?``; only instruments that answer are returned.
+Discovery returns only instruments that answer.
 """
 
 from __future__ import annotations
@@ -24,6 +26,9 @@ from concurrent.futures import ThreadPoolExecutor
 import psutil
 import pyvisa
 from pydantic import BaseModel, ConfigDict
+from serial.tools import list_ports
+
+from lab_mcp.instruments.manson_hcs import SerialTransport
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +37,10 @@ RIGOL_SCPI_PORT = 5555
 IDN_TIMEOUT_MS = 2000
 SCAN_CONNECT_TIMEOUT_S = 0.3
 SCAN_WORKERS = 128
+# USB-serial bridges in Manson HCS power supplies, as (vendor ID, product ID).
+HCS_USB_IDS = {(0x10C4, 0xEA60)}  # Silicon Labs CP210x
+SERIAL_PROBE_TIMEOUT_S = 0.5
+SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON")
 
 
 class DiscoveredInstrument(BaseModel):
@@ -47,6 +56,14 @@ class DiscoveredInstrument(BaseModel):
     @property
     def is_rigol(self) -> bool:
         return self.manufacturer.upper().startswith("RIGOL")
+
+    @property
+    def is_manson(self) -> bool:
+        return self.manufacturer.upper().startswith("MANSON")
+
+    @property
+    def is_supported(self) -> bool:
+        return self.manufacturer.upper().startswith(SUPPORTED_MANUFACTURERS)
 
 
 def available_backends() -> list[str]:
@@ -65,10 +82,14 @@ def available_backends() -> list[str]:
 def discover(
     *,
     scan_lan: bool = True,
-    match: Callable[[DiscoveredInstrument], bool] = lambda inst: inst.is_rigol,
+    match: Callable[[DiscoveredInstrument], bool] = lambda inst: inst.is_supported,
+    skip_serial_ports: Iterable[str] = (),
 ) -> list[DiscoveredInstrument]:
-    """Find instruments via VISA enumeration and, if that finds none, a LAN port scan."""
-    found: dict[str, DiscoveredInstrument] = {}  # keyed by serial to merge USB/LAN duplicates
+    """Find instruments with VISA, with a LAN scan if VISA finds none, and on serial ports.
+
+    skip_serial_ports: ports that are open already. A second open of a serial port fails.
+    """
+    found: dict[str, DiscoveredInstrument] = {}  # keyed by serial number to merge USB/LAN duplicates
     seen_hosts: set[str] = set()
 
     for backend in available_backends():
@@ -87,7 +108,47 @@ def discover(
             if inst is not None and match(inst):
                 found.setdefault(inst.serial, inst)
 
+    for inst in discover_serial(skip_ports=skip_serial_ports):
+        if match(inst):
+            found.setdefault(inst.serial, inst)
+
     return list(found.values())
+
+
+def discover_serial(skip_ports: Iterable[str] = ()) -> list[DiscoveredInstrument]:
+    """Find Manson HCS power supplies on the serial ports of known USB-serial bridges."""
+    skip = {p.upper() for p in skip_ports}
+    found = []
+    for port in list_ports.comports():
+        if (port.vid, port.pid) not in HCS_USB_IDS or port.device.upper() in skip:
+            continue
+        inst = identify_hcs(port.device, usb_serial=port.serial_number)
+        if inst is not None:
+            found.append(inst)
+    return found
+
+
+def identify_hcs(device: str, usb_serial: str | None = None) -> DiscoveredInstrument | None:
+    """Send GMOD to a serial port. Return the instrument, or None if no HCS answers."""
+    try:
+        transport = SerialTransport.open(device, timeout=SERIAL_PROBE_TIMEOUT_S)
+    except OSError as exc:
+        log.debug("Cannot open %s: %s", device, exc)
+        return None
+    try:
+        model = transport.request("GMOD")
+    except OSError as exc:  # includes TimeoutError and HCSProtocolError
+        log.debug("No HCS reply on %s: %s", device, exc)
+        return None
+    finally:
+        transport.close()
+    if not model or not model.upper().startswith("HCS"):
+        log.debug("Device on %s is not an HCS: %r", device, model)
+        return None
+    return DiscoveredInstrument(
+        address=device, backend="serial", manufacturer="MANSON",
+        model=model, serial=usb_serial or device, firmware="",
+    )
 
 
 def identify(address: str, backend: str) -> DiscoveredInstrument | None:
