@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from lab_mcp import discovery
 from lab_mcp.discovery import DiscoveredInstrument
+from lab_mcp.instruments.multimeters import DM3058_MODELS, RigolDM3058
 from lab_mcp.instruments.power_supplies import RIGOL_DP_MODELS, MansonHCS, RigolDP, SerialTransport
 
 IO_TIMEOUT_MS = 5000
@@ -39,6 +40,7 @@ mcp = MCPServer(
         "Read the limits of each channel with dp_status. "
         "Manson HCS series: DC power supply with one output, tools hcs_*. "
         "Read the limits of the HCS model with hcs_status. "
+        "Rigol DM3058 and DM3058E: digital multimeter, tools dmm_*. "
         "Set the voltage and the current limit before you switch an output on. "
         "Read the status before you switch an output on. "
         "After a change, wait 1 s before you measure. "
@@ -54,6 +56,10 @@ RIGOL_DP_HINT = (
     "For LAN, connect the instrument to the same network as this computer. "
     "Close other programs that use the instrument."
 )
+DMM_HINT = (
+    "Connect the USB cable and install a USB-TMC driver (NI-VISA, or WinUSB on Windows). "
+    "The DM3058E has no LAN interface. Close other programs that use the instrument."
+)
 HCS_HINT = (
     "Set the MODE switch on the rear panel to Normal. Connect the USB cable. "
     "Make sure that Windows shows a COM port for the instrument (Silicon Labs CP210x driver). "
@@ -63,6 +69,10 @@ HCS_HINT = (
 
 def _is_rigol_dp(inst: DiscoveredInstrument) -> bool:
     return inst.is_rigol and inst.model.upper() in RIGOL_DP_MODELS
+
+
+def _is_dm3058(inst: DiscoveredInstrument) -> bool:
+    return inst.is_rigol and inst.model.upper() in DM3058_MODELS
 
 
 def _is_hcs(inst: DiscoveredInstrument) -> bool:
@@ -180,6 +190,18 @@ def _identify_visa_address(address: str) -> DiscoveredInstrument | None:
     return None
 
 
+def _open_dm3058(info: DiscoveredInstrument) -> tuple[RigolDM3058, Callable[[], None]]:
+    res = pyvisa.ResourceManager(info.backend).open_resource(
+        info.address, read_termination="\n", write_termination="\n", timeout=IO_TIMEOUT_MS
+    )
+    try:
+        dev = RigolDM3058(res)
+    except Exception:
+        res.close()
+        raise
+    return dev, res.close
+
+
 def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]]:
     transport = SerialTransport.open(info.address)
     try:
@@ -193,7 +215,8 @@ def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]
 lock = threading.RLock()
 rigol_dp = _Slot[RigolDP]("Rigol DP", _is_rigol_dp, _open_rigol_dp, _identify_visa_address, RIGOL_DP_HINT)
 hcs = _Slot[MansonHCS]("Manson HCS", _is_hcs, _open_hcs, discovery.identify_hcs, HCS_HINT)
-SLOTS: list[_Slot] = [rigol_dp, hcs]
+dm3058 = _Slot[RigolDM3058]("Rigol DM3058", _is_dm3058, _open_dm3058, _identify_visa_address, DMM_HINT)
+SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058]
 
 
 def _open_serial_ports() -> list[str]:
@@ -282,7 +305,7 @@ def main(argv: list[str] | None = None) -> None:
 
 # The tool modules register their tools on mcp. They import mcp, the slots and _guard
 # from this module, thus this import must be after these definitions.
-from lab_mcp.tools import power_supplies  # noqa: E402, F401
+from lab_mcp.tools import multimeters, power_supplies  # noqa: E402, F401
 
 
 if __name__ == "__main__":

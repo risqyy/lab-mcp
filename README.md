@@ -16,11 +16,15 @@ The server finds the instruments automatically. You do not need to configure add
 | Rigol DP932U | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Rigol DP932E | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
+| Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | No                                      |
+| Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 
 "Tested" means that a test on a real instrument was done with all tools.
 The LAN connection is not tested on a real instrument.
 
 The DP900 support (DP932A, DP932U, DP932E) agrees with the DP900 programming guide (July 2024). It is not tested on a real instrument.
+
+The DM3058/DM3058E support agrees with the DM3058/DM3058E programming guide (January 2015). It is not tested on a real instrument.
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
@@ -172,6 +176,24 @@ Use `dp_connect` or `hcs_connect` with the serial number to select one.
 | `dp_set_protection`      | Set the over-voltage protection (OVP) and over-current protection (OCP). |
 | `dp_clear_protection`    | Reset a tripped OVP or OCP. The output stays off.                |
 
+### Rigol DM3058 and DM3058E
+
+| Tool                     | Function                                                         |
+|--------------------------|------------------------------------------------------------------|
+| `dmm_connect`            | Connect to a multimeter by serial number or by VISA address.     |
+| `dmm_identify`           | Show the address, model, serial number and firmware.             |
+| `dmm_configuration`      | Read the function, range and speed, and the available ranges.    |
+| `dmm_configure`          | Set the function, range and speed. Do not measure.               |
+| `dmm_measure`            | Set the function and measure one value.                          |
+| `dmm_read`               | Measure one value with the present configuration.                |
+| `dmm_measure_series`     | Measure a series of values, with minimum, maximum, mean and standard deviation. |
+
+Functions: `dc_voltage`, `ac_voltage`, `dc_current`, `ac_current`, `resistance_2w`, `resistance_4w`,
+`frequency`, `period`, `continuity`, `diode`, `capacitance`.
+
+Range: give the largest value that you expect (`expected_max`). The server selects the smallest range
+that includes this value. Use `auto` for autorange. A value out of the range gives `overload: true` and no value.
+
 ### Manson HCS
 
 | Tool                     | Function                                                         |
@@ -243,6 +265,10 @@ These items were found in a test with an HCS-3404:
 
 **WARNING:** The AI assistant can switch the outputs on. Disconnect sensitive loads before you use the server.
 
+**CAUTION:** For a current measurement with the multimeter, the test leads must be in the current input,
+and the multimeter must be in series with the load. If the leads are in the current input and you connect them
+across a voltage source, the fuse of the multimeter blows. The server cannot detect the position of the test leads.
+
 ## Troubleshooting
 
 | Problem                                    | Solution                                                                 |
@@ -251,6 +277,7 @@ These items were found in a test with an HCS-3404:
 | The server does not find a LAN instrument  | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
 | The server does not find a Manson HCS      | Set the MODE switch on the rear panel to "Normal". Make sure that the instrument is on. Make sure that the operating system shows a COM port for the CP210x bridge. If not, install the Silicon Labs CP210x driver. Close other programs that use the port. |
 | The server does not find a Rigol DP        | Close other programs that use the instrument. Then try again. |
+| The server does not find a multimeter      | Install a USB-TMC driver. The DM3058E has no LAN interface. Close other programs that use the instrument. |
 | The server finds more than one instrument  | Use `discover_instruments`. Then use `dp_connect` or `hcs_connect` with the serial number. |
 
 ## Development
@@ -272,14 +299,18 @@ src/lab_mcp/
 ├── discovery.py               # discovery on USB, LAN and serial ports
 ├── server.py                  # MCP server, connection slots, discover_instruments, all_outputs_off
 ├── instruments/
-│   └── power_supplies/
-│       ├── rigol_dp.py        # Rigol DP800 and DP900 series
-│       └── manson_hcs.py      # Manson HCS series
+│   ├── power_supplies/
+│   │   ├── rigol_dp.py        # Rigol DP800 and DP900 series
+│   │   └── manson_hcs.py      # Manson HCS series
+│   └── multimeters/
+│       └── rigol_dm3058.py    # Rigol DM3058 and DM3058E
 └── tools/
-    └── power_supplies.py      # dp_* and hcs_* tools
+    ├── power_supplies.py      # dp_* and hcs_* tools
+    └── multimeters.py         # dmm_* tools
 tests/
 ├── test_*.py                  # discovery, server and start of the server process
-└── power_supplies/            # driver tests and simulated instruments
+├── power_supplies/            # driver tests and simulated instruments
+└── multimeters/
 ```
 
 ### Add an instrument
