@@ -50,7 +50,7 @@ mcp = MCPServer(
         "GW Instek AFG-2105: signal generator, tools sig_*. "
         "Read sig_status for the load setting and voltage limits before setting or enabling a signal. "
         "SIGLENT SDS1104X-E: oscilloscope with four channels, tools scope_*. "
-        "Read scope_status before you change settings. "
+        "Read scope_status before you change settings. Use scope_screenshot to see the screen. "
         "Set the voltage and the current limit before you switch an output on. "
         "Read the status before you switch an output on. "
         "After a change, wait 1 s before you measure. "

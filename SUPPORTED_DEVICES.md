@@ -320,8 +320,15 @@ The reference is the [AFG-2000 Series User Manual](https://www.gwinstek.com/en-g
 | `scope_single` | Start one acquisition and wait for the trigger for a maximum time. |
 | `scope_measure` | Read automatic measurements of a channel, with unit and validity. |
 | `scope_waveform` | Read the waveform samples of a channel, with the time and voltage scale. |
+| `scope_screenshot` | Read the screen as a PNG image (800 x 480 pixels). |
+| `scope_math` | Read the math operation, its sources and the scale of the math trace. |
+| `scope_configure_math` | Set the math operation: `add`, `subtract`, `multiply`, `divide`, `fft`, `integral`, `differential` or `sqrt`. |
+| `scope_math_waveform` | Read the math waveform (`add`, `subtract`, `multiply`, `divide`), with the time and value scale. |
+| `scope_cursors` | Read the cursor mode and, in manual mode, the X cursor times and their difference. |
+| `scope_set_time_cursors` | Show the manual X cursors and read the time difference and its reciprocal. |
+| `scope_cursors_off` | Remove the cursors from the screen. |
 
-`scope_status`, `scope_identify` and `scope_measure` do not change settings.
+`scope_status`, `scope_identify`, `scope_measure`, `scope_screenshot`, `scope_math` and `scope_cursors` do not change settings.
 `scope_waveform` sets the waveform transfer setup (`WFSU`) before each transfer. It does not change other settings.
 
 ### Connection
@@ -350,6 +357,27 @@ If the memory has more points than `max_points` (maximum 100000), the driver tra
 The voltage of these samples can be clipped. A signal above the screen gave codes of approximately 120, not 127.
 Stop the acquisition, or use `scope_single`, before you read a waveform. Then the waveform is from one acquisition.
 
+### Math, cursors and screenshot
+
+`scope_math_waveform` uses `MATH:WF? DAT2` and the calculation of the programming guide:
+`value = code * volts_per_div / 25 - position_div * volts_per_div`.
+The time interval is `SANU of source1 / (number of points * sample rate)`, as in the programming guide.
+The oscilloscope ignores `WFSU` for the math trace and always sends all memory points.
+The driver keeps every n-th point. With 2.8 Mpts, the transfer takes approximately 3 s.
+The math waveform is not available for `fft`, `integral`, `differential` and `sqrt`, because the
+programming guide gives no value scale for them. Use `scope_screenshot` for these traces.
+
+The SDS1104X-E has no remote command to switch the math trace on or off. Use the Math key on the front panel.
+After a change of the math settings, `scope_configure_math` waits 1 s. Before this time, the math data uses the previous scale.
+
+`scope_set_time_cursors` sets the manual X cursors relative to the trigger point. The times must be in the screen range.
+Y cursors and track cursors are not supported.
+
+The screen shows changes with a delay of up to approximately 2 s. `scope_screenshot` waits until 2.5 s
+after the last change of the server before it reads the screen. Value messages on the screen
+(for example `1.50V` after a change of the trigger level) can stay for approximately 3 s.
+Decode lists, FFT traces and Y values are visible only on the screenshot.
+
 ### Limits
 
 | Setting | Limit |
@@ -366,8 +394,8 @@ The oscilloscope sets an offset, a trigger delay or a trigger level outside its 
 The tools then return the value that the oscilloscope uses. Compare it with the requested value.
 If the oscilloscope cannot calculate a measurement, it sends `****`. The tool then returns `valid: false` and no value.
 
-Not supported: trigger types other than edge, math and digital channels, FFT, decoding, memory depth,
-acquisition mode, cursors, and the built-in function generator.
+Not supported: trigger types other than edge, digital channels, FFT settings and FFT data, decoding,
+Y cursors and track cursors, saving and recalling setups, memory depth, acquisition mode, and the built-in function generator.
 Other SDS1000X-E models (for example SDS1204X-E or SDS1202X-E) use the same programming guide, but the server does not accept them.
 
 ### Instrument behavior
@@ -381,6 +409,13 @@ Tests on firmware 8.3.6.1.37R17 found these differences from the programming gui
 | Second `TRMD SINGLE` | If a single acquisition waits for the trigger, a second `TRMD SINGLE` or `ARM` stops it. The driver does not send it again. |
 | `SAST?` | After such a stop, the oscilloscope does not answer `SAST?`. The driver reads `TRMD?` first and sends `SAST?` only if the sweep is not `STOP`. |
 | Out-of-range values | The oscilloscope sets the offset, trigger delay and trigger level to the nearest limit. The trigger level limit is relative to the offset. |
+| Math on and off | `MATH:TRA`, `MTH:TRA`, `MATH:TRACE` and `MATH:SWITCH` have no effect. `MATH:TRA?` gets no reply. |
+| `MATH:WF?` | Ignores `WFSU` and sends all memory points. After a change of `MTVD` or `MTVP`, the data uses the previous scale for approximately 0.5 s. |
+| `CRVA? HREL` | Sends the X2 time before the X1 time. The driver reads the positions with `CRST?`. |
+| Y cursors | `CRST VREF,0V` gave 3.00 V on the screen. The driver does not set Y cursors. |
+| Decode | `DCST`, `DCPA` and `B<n>:DCUT` operate. Queries such as `DCPA?` and `B1:DCUT?` get no reply. The decoded data is visible only on the screen. |
+| `PNSU?` | Sends the setup as an XML block of approximately 88 kB, but over USB the reply arrives only after a read timeout. The driver does not use it. |
+| `SCDP` | Sends a BMP file with 800 x 480 pixels, 16 bit RGB565, top-down, and one LF. The screen shows changes with a delay of up to approximately 2 s. |
 
 ### Errors
 
@@ -405,6 +440,9 @@ connected through USB with the WinUSB driver and pyvisa-py. These items are test
 | Open input | Waveform voltage compared with the `mean` measurement of the oscilloscope, with 20 V offset | -17.6 V and -17.59 V |
 | Known signal | Probe on C1 (probe attenuation setting 1), connected to the calibration output (square wave, 1 kHz) | Waveform: top 3.00 V, base -0.02 V, 1000.1 Hz, 50.0 % duty cycle. Measurements: top 3.00 V, base -0.02 V, 999.9 Hz, 50.0 %, rise time 1.08 us. |
 | Time axis | Calibration signal with trigger delays 0, ±0.25 ms and ±0.5 ms | Trigger edge at 0 s within one sample interval |
+| Math | `C1+C1` with the calibration signal, 1 V/div and 2 V/div, positions -2 div to +1 div, 2.8 Mpts | 6.00 V and -0.08 V (C1: 3.00 V and -0.02 V), 1000.1 Hz, trigger edge at 0.6 us (sample interval 0.56 us) |
+| Cursors | Manual X cursors at -0.5 ms and 0.5 ms, also with 0.5 ms trigger delay | 1.000 ms and 1.0000 kHz, the same values on the screen |
+| Screenshot | Screen after channel, math, FFT, cursor and decode changes | PNG with the present screen after the wait time |
 
 Not tested: the LAN connection, NI-VISA, channels C2 to C4 with a signal, AC coupling with a signal,
 the EX, EX5 and LINE trigger sources, and the bandwidth limit with a signal.
@@ -418,6 +456,8 @@ The known-signal test used only the calibration output. It does not verify the a
 | `scope_run` refuses to start | The server does not know the previous sweep, for example after a stop on the front panel. Use `scope_run` with `sweep` `auto` or `normal`. |
 | `scope_single` returns `ready` | No trigger occurred in the timeout. Check the trigger source and level, or use a longer timeout. |
 | `valid` is false for a measurement | Make sure that the channel is on and shows at least one complete period of the signal. |
+| The math trace stays on the screen | Push the Math key on the front panel. The server cannot switch the math trace off. |
+| The screenshot shows an old state | A change on the front panel is not known to the server. Call `scope_screenshot` again after 2 s. |
 
 ## Extend device support
 

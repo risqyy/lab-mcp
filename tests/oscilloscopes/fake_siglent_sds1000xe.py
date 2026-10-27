@@ -12,6 +12,25 @@ import pyvisa
 CHANNELS = ("C1", "C2", "C3", "C4")
 
 
+def make_bmp(width: int, height: int) -> bytes:
+    """BMP file as the SDS1104X-E sends it: RGB565 with bit fields, top-down. Pixel (x, y) is red, green or blue."""
+    colors = (0xF800, 0x07E0, 0x001F)
+    stride = (width * 2 + 3) & ~3
+    rows = b"".join(
+        b"".join(colors[(x + y) % 3].to_bytes(2, "little") for x in range(width)).ljust(stride, b"\0")
+        for y in range(height)
+    )
+    offset = 66
+    header = (
+        b"BM" + (offset + len(rows)).to_bytes(4, "little") + bytes(4) + offset.to_bytes(4, "little")
+        + (40).to_bytes(4, "little") + width.to_bytes(4, "little") + (-height).to_bytes(4, "little", signed=True)
+        + (1).to_bytes(2, "little") + (16).to_bytes(2, "little") + (3).to_bytes(4, "little")
+        + len(rows).to_bytes(4, "little") + bytes(16)
+        + (0xF800).to_bytes(4, "little") + (0x07E0).to_bytes(4, "little") + (0x001F).to_bytes(4, "little")
+    )
+    return header + rows
+
+
 class FakeSDSResource:
     def __init__(self) -> None:
         self.writes: list[str] = []
@@ -41,6 +60,15 @@ class FakeSDSResource:
         self.chunk_size = 7
         self._pending: list[bytes] = []
         self.offset_limit = 10.0
+        self.math_equation = "C1+C2"
+        self.mtvd = 1.0
+        self.mtvp = 0
+        # Math block of the real oscilloscope: all points, also with WFSU (tested).
+        self.math_memory = bytes(range(0, 10))
+        self.crms = "OFF"
+        self.crty = "X"
+        self.crst = {"TREF": -1e-6, "TDIF": 1e-6, "VREF": 0.0, "VDIF": 0.0}
+        self.screen_bmp = make_bmp(4, 2)
 
     @property
     def session(self) -> int:
@@ -101,6 +129,27 @@ class FakeSDSResource:
         elif m := re.fullmatch(r"(C[1-4]):WF\? DAT2", msg):
             self._pending = self.raw_reply if self.raw_reply is not None else self._chunks(self._block(m[1]))
             self.raw_reply = None
+        elif msg == "MATH:WF? DAT2":
+            header = b"" if self.chdr == "OFF" else b"MATH:WF DAT2,"
+            block = header + b"#9" + f"{len(self.math_memory):09d}".encode() + self.math_memory + b"\n\n"
+            self._pending = self.raw_reply if self.raw_reply is not None else self._chunks(block)
+            self.raw_reply = None
+        elif msg == "SCDP":
+            # Like the real oscilloscope: the BMP file and one LF.
+            self._pending = self.raw_reply if self.raw_reply is not None else self._chunks(self.screen_bmp + b"\n")
+            self.raw_reply = None
+        elif m := re.fullmatch(r"DEF EQN,'(\S+)'", msg):
+            self.math_equation = m[1]
+        elif m := re.fullmatch(r"MTVD (\d+)(uV|mV|V)", msg):
+            self.mtvd = int(m[1]) * {"uV": 1e-6, "mV": 1e-3, "V": 1.0}[m[2]]
+        elif m := re.fullmatch(r"MTVP (-?\d+)", msg):
+            self.mtvp = int(m[1])
+        elif m := re.fullmatch(r"CRMS (OFF|MANUAL|TRACK)", msg):
+            self.crms = m[1]
+        elif m := re.fullmatch(r"CRTY (X|Y|X-Y)", msg):
+            self.crty = m[1]
+        elif m := re.fullmatch(r"C[1-4]:CRST TREF,(\S+)S,TDIF,(\S+)S", msg):
+            self.crst["TREF"], self.crst["TDIF"] = float(m[1]), float(m[2])
         else:
             raise AssertionError(f"unexpected write {msg!r}")
 
@@ -172,6 +221,23 @@ class FakeSDSResource:
             if self.sast is None:
                 raise pyvisa.errors.VisaIOError(pyvisa.constants.StatusCode.error_timeout)
             return self._reply("SAST", self.sast)
+        if msg == "DEF?":
+            return self._reply("DEF", f"EQN,'{self.math_equation}'")
+        if msg == "MTVD?":
+            return self._reply("MTVD", f"{self.mtvd:.2E}")  # the real oscilloscope sends no unit
+        if msg == "MTVP?":
+            return self._reply("MTVP", str(self.mtvp))
+        if msg == "CRMS?":
+            return self._reply("CRMS", self.crms)
+        if msg == "CRTY?":
+            return self._reply("CRTY", self.crty)
+        if m := re.fullmatch(r"(C[1-4]):CRST\? TREF,TDIF", msg):
+            return self._reply(f"{m[1]}:CRST", f"TREF,{self.crst['TREF']:.2E}S,TDIF,{self.crst['TDIF']:.2E}S")
+        if m := re.fullmatch(r"(C[1-4]):CRVA\? HREL", msg):
+            delta = abs(self.crst["TDIF"] - self.crst["TREF"])
+            # Like the real oscilloscope: X2 before X1, not as in the programming guide.
+            return self._reply(f"{m[1]}:CRVA", f"HREL,{delta:.3E}s,{1 / delta:.4E}Hz,"
+                               f"{self.crst['TDIF']:.2E}s,{self.crst['TREF']:.2E}s")
         if m := re.fullmatch(r"(C[1-4]):PAVA\? (\w+)", msg):
             return self._reply(f"{m[1]}:PAVA", f"{m[2]},{self.pava.get((m[1], m[2]), '****')}")
         raise AssertionError(f"unexpected query {msg!r}")

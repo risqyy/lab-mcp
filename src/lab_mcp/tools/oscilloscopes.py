@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+from mcp.server.mcpserver import Image
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, Field
 
@@ -13,11 +14,15 @@ from lab_mcp.instruments.oscilloscopes.siglent_sds1000xe import (
     Channel,
     ChannelConfiguration,
     Coupling,
+    MathConfiguration,
+    MathOperation,
+    MathWaveform,
     Measurement,
     MeasurementResult,
     RunSweep,
     ScopeStatus,
     TimebaseConfiguration,
+    TimeCursors,
     TriggerConfiguration,
     TriggerCoupling,
     TriggerSlope,
@@ -189,3 +194,87 @@ def scope_waveform(
 ) -> Waveform:
     with _guard(sds):
         return sds.device().waveform(channel, max_points)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def scope_screenshot() -> Image:
+    """Read the screen of the oscilloscope as a PNG image (800 x 480 pixels).
+
+    Use it to see traces, decode lists, FFT and cursors that the other tools do not read. This tool does not change settings.
+    """
+    with _guard(sds):
+        return Image(data=sds.device().screenshot_png(), format="png")
+
+
+@mcp.tool(annotations=READ_ONLY)
+def scope_math() -> MathConfiguration:
+    """Read the math operation, its sources, and the scale of the math trace. This tool does not change settings."""
+    with _guard(sds):
+        return sds.device().math()
+
+
+@mcp.tool(annotations=ToolAnnotations(idempotent_hint=True))
+def scope_configure_math(
+    operation: Annotated[MathOperation, Field(description=(
+        "add, subtract, multiply, divide (source1 and source2), or fft, integral, differential, sqrt (source1 only)"
+    ))],
+    source1: ChannelParam,
+    source2: Annotated[Channel | None, Field(description="Second channel for add, subtract, multiply and divide")] = None,
+    volts_per_div: Annotated[float | None, Field(gt=0, allow_inf_nan=False, description=(
+        "Vertical scale of the math trace: a value of the 1-2-5 sequence from 0.0005 to 100. "
+        "Only for add, subtract, multiply and divide."
+    ))] = None,
+    position_div: Annotated[float | None, Field(ge=-5.1, le=5.1, allow_inf_nan=False, description=(
+        "Vertical position of the math trace in div above the screen center. Only for add, subtract, multiply and divide."
+    ))] = None,
+) -> MathConfiguration:
+    """Set the math operation of the oscilloscope.
+
+    The oscilloscope has no remote command to switch the math trace on or off. Switch it on or off with the Math key.
+    The sources should be switched on.
+    """
+    with _guard(sds):
+        return sds.device().configure_math(operation, source1, source2, volts_per_div, position_div)
+
+
+@mcp.tool(description=(
+    "Read the math waveform (add, subtract, multiply or divide) with the time and value scale. "
+    "The oscilloscope always transfers all memory points of the math trace; with 14 Mpts memory this can take some seconds. "
+    "The server keeps every n-th point so that the result has max_points points or fewer. "
+    "Stop the acquisition or use scope_single first. Use scope_screenshot for an FFT."
+))
+def scope_math_waveform(
+    max_points: Annotated[int, Field(ge=1, le=MAX_WAVEFORM_POINTS, description="Largest number of samples in the result")] = 1000,
+) -> MathWaveform:
+    with _guard(sds):
+        return sds.device().math_waveform(max_points)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def scope_cursors(source: ChannelParam = "C1") -> TimeCursors:
+    """Read the cursor mode and, in manual mode, the X cursor times and their difference. This tool does not change settings."""
+    with _guard(sds):
+        return sds.device().time_cursors(source)
+
+
+@mcp.tool(annotations=ToolAnnotations(idempotent_hint=True))
+def scope_set_time_cursors(
+    source: ChannelParam,
+    x1_s: Annotated[float, Field(allow_inf_nan=False, description="Time of cursor X1 in s relative to the trigger point")],
+    x2_s: Annotated[float, Field(allow_inf_nan=False, description="Time of cursor X2 in s relative to the trigger point")],
+) -> TimeCursors:
+    """Show the manual X cursors on the screen and read the time difference and its reciprocal (frequency).
+
+    The times must be in the screen range. This sets the cursor mode to manual.
+    """
+    with _guard(sds):
+        return sds.device().set_time_cursors(source, x1_s, x2_s)
+
+
+@mcp.tool(annotations=ToolAnnotations(idempotent_hint=True))
+def scope_cursors_off() -> TimeCursors:
+    """Remove the cursors from the screen."""
+    with _guard(sds):
+        dev = sds.device()
+        dev.cursors_off()
+        return dev.time_cursors("C1")

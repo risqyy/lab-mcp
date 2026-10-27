@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from collections.abc import Iterator
 
 import pytest
@@ -34,12 +35,14 @@ def test_scope_tools_are_registered() -> None:
     assert {
         "scope_connect", "scope_identify", "scope_status", "scope_configure_channel", "scope_configure_timebase",
         "scope_configure_trigger", "scope_run", "scope_stop", "scope_single", "scope_measure", "scope_waveform",
+        "scope_screenshot", "scope_math", "scope_configure_math", "scope_math_waveform", "scope_cursors",
+        "scope_set_time_cursors", "scope_cursors_off",
     } <= names
 
 
 def test_read_only_tools_are_annotated() -> None:
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
-    for name in ("scope_identify", "scope_status", "scope_measure"):
+    for name in ("scope_identify", "scope_status", "scope_measure", "scope_screenshot", "scope_math", "scope_cursors"):
         assert tools[name].annotations.read_only_hint is True
     assert not (tools["scope_waveform"].annotations and tools["scope_waveform"].annotations.read_only_hint)
 
@@ -134,3 +137,27 @@ def test_other_siglent_model_is_not_selected(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [other] if kwargs["match"](other) else [])
     with pytest.raises(ToolError, match="No SIGLENT SDS found.*USB-TMC driver"):
         call("scope_status")
+
+
+def test_scope_screenshot_returns_png_image(fake_scope: FakeSDSResource) -> None:
+    [content] = call("scope_screenshot").content
+    assert (content.type, content.mime_type) == ("image", "image/png")
+    assert base64.b64decode(content.data).startswith(bytes([0x89]) + b"PNG")
+    assert fake_scope.writes == ["SCDP"]
+
+
+def test_scope_math(fake_scope: FakeSDSResource) -> None:
+    cfg = call("scope_configure_math", operation="add", source1="C1", source2="C1", volts_per_div=2, position_div=-1)
+    assert (cfg.structured_content["equation"], cfg.structured_content["position_div"]) == ("C1+C1", -1.0)
+    fake_scope.math_memory = bytes([75, 0])  # 75 codes = 3 div -> 6 V - (-2 V)
+    wf = call("scope_math_waveform", max_points=10).structured_content
+    assert wf["values"] == pytest.approx([8.0, 2.0])
+    with pytest.raises(ToolError, match="needs source2"):
+        call("scope_configure_math", operation="add", source1="C1")
+
+
+def test_scope_cursors(fake_scope: FakeSDSResource) -> None:
+    fake_scope.tdiv = 2e-4
+    c = call("scope_set_time_cursors", source="C1", x1_s=-5e-4, x2_s=5e-4).structured_content
+    assert (c["mode"], c["inverse_delta_hz"]) == ("manual", pytest.approx(1000.0))
+    assert call("scope_cursors_off").structured_content["mode"] == "off"

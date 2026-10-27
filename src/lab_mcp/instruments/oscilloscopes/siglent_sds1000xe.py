@@ -9,9 +9,12 @@ The driver needs only a resource with ``write``, ``query`` and ``read_raw`` (for
 
 from __future__ import annotations
 
+import array
 import math
 import re
+import sys
 import time
+import zlib
 from collections.abc import Callable
 from typing import Literal, Protocol
 
@@ -81,6 +84,33 @@ _UNIT_NAMES = {"V": "V", "S": "s", "HZ": "Hz", "%": "%", "A": "A"}
 
 _NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[Ee][-+]?\d+)?")
 MAX_WAVEFORM_POINTS = 100_000
+
+# Math (programming guide DEFINE, MATH_VERT_DIV, MATH_VERT_POS).
+MathOperation = Literal["add", "subtract", "multiply", "divide", "fft", "integral", "differential", "sqrt"]
+_MATH_SYMBOLS = {"add": "+", "subtract": "-", "multiply": "*", "divide": "/"}
+_MATH_OPERATORS = {v: k for k, v in _MATH_SYMBOLS.items()}
+ARITHMETIC_OPERATIONS = frozenset(_MATH_SYMBOLS)
+_MATH_PREFIXES = {"fft": "FFT", "integral": "INTG", "differential": "DIFF", "sqrt": "SQRT"}
+_MATH_FUNCTIONS = {v: k for k, v in _MATH_PREFIXES.items()}
+_MATH_UNITS = {"add": "V", "subtract": "V", "multiply": "V^2", "divide": "V/V"}
+_MATH_VDIV_TOKENS = (
+    "500uV", "1mV", "2mV", "5mV", "10mV", "20mV", "50mV", "100mV", "200mV", "500mV",
+    "1V", "2V", "5V", "10V", "20V", "50V", "100V",
+)
+_VOLT_SI = {"uV": 1e-6, "mV": 1e-3, "V": 1.0}
+MATH_VDIVS: dict[float, str] = {
+    float(re.match(r"\d+", t)[0]) * _VOLT_SI[re.sub(r"^\d+", "", t)]: t for t in _MATH_VDIV_TOKENS  # type: ignore[index]
+}
+# MATH_VERT_POS is in screen pixels: 50 for each division, from -255 to 255.
+MATH_POSITION_PER_DIV = 50
+MATH_POSITION_MAX = 255
+# After a math change, MATH:WF? sends data with the previous scale for approximately 0.5 s,
+# also when the acquisition is stopped (tested: 0.4 s too short, 0.6 s sufficient).
+MATH_SETTLE_S = 1.0
+# The screen shows changes with a delay (tested): a single change after approximately 1.2 s,
+# the two cursor positions of one CRST command after approximately 2 s. Value messages
+# (for example "1.00V" after a change of the scale) stay on the screen for approximately 3 s.
+SCREEN_SETTLE_S = 2.5
 
 
 class SCPIResource(Protocol):
@@ -158,6 +188,36 @@ class Waveform(_Model):
     voltages_v: list[float] = Field(description="Voltage of each sample: code * volts_per_div / 25 - offset_v")
 
 
+class MathConfiguration(_Model):
+    operation: str = Field(description="add, subtract, multiply, divide, fft, integral, differential or sqrt")
+    equation: str = Field(description="Equation of the oscilloscope, for example C1+C2")
+    source1: Channel
+    source2: Channel | None
+    volts_per_div: float | None = Field(description="Vertical scale of the math trace. Only for add, subtract, multiply and divide.")
+    position_div: float | None = Field(description="Vertical position of the math trace in div above the screen center. Only for add, subtract, multiply and divide.")
+
+
+class MathWaveform(_Model):
+    math: MathConfiguration
+    unit: str = Field(description="Unit of values: V for add and subtract, V^2 for multiply, V/V for divide")
+    sample_count: int
+    memory_points: int = Field(description="Number of points that the oscilloscope transferred")
+    decimation: int = Field(description="Every n-th transferred point is in this result")
+    first_sample_time_s: float = Field(description="Time of the first sample relative to the trigger point")
+    sample_interval_s: float = Field(description="Time of sample i = first_sample_time_s + i * sample_interval_s")
+    off_screen_samples: int = Field(description="Samples more than 4 div from the screen center. Their value can be clipped.")
+    values: list[float] = Field(description="Value of each sample: code * volts_per_div / 25 - position_div * volts_per_div")
+
+
+class TimeCursors(_Model):
+    mode: str = Field(description="off, manual or track (CURSOR_MEASURE)")
+    source: Channel
+    x1_s: float | None = Field(description="Time of cursor X1 relative to the trigger point. None if the mode is not manual.")
+    x2_s: float | None = Field(description="Time of cursor X2 relative to the trigger point. None if the mode is not manual.")
+    delta_s: float | None = Field(description="Time between X1 and X2 (always positive)")
+    inverse_delta_hz: float | None = Field(description="1 / delta_s")
+
+
 class SiglentSDS1000XE:
     def __init__(self, resource: SCPIResource, model: str = "SDS1104X-E",
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic):
@@ -168,10 +228,16 @@ class SiglentSDS1000XE:
         # After STOP, TRMD? returns STOP and the previous sweep is not known (tested, firmware
         # 8.3.6.1.37R17). The driver remembers the last continuous sweep that it read or set.
         self._continuous_sweep: str | None = None
+        self._last_change: float | None = None
 
     @property
     def resource(self) -> SCPIResource:
         return self._res
+
+    def _write(self, message: str, change: bool = True) -> None:
+        self._res.write(message)
+        if change:
+            self._last_change = self._clock()
 
     def identify(self) -> str:
         return self._res.query("*IDN?").strip()
@@ -248,17 +314,17 @@ class SiglentSDS1000XE:
                 )
         # The attenuation changes the scale, thus set it first.
         if probe_attenuation is not None:
-            self._res.write(f"{ch}:ATTN {probe_attenuation:g}")
+            self._write(f"{ch}:ATTN {probe_attenuation:g}")
         if coupling is not None:
-            self._res.write(f"{ch}:CPL {_COUPLING_CODES[coupling]}")
+            self._write(f"{ch}:CPL {_COUPLING_CODES[coupling]}")
         if volts_per_div is not None:
-            self._res.write(f"{ch}:VDIV {volts_per_div:.6E}V")
+            self._write(f"{ch}:VDIV {volts_per_div:.6E}V")
         if offset_v is not None:
-            self._res.write(f"{ch}:OFST {offset_v:.6E}V")
+            self._write(f"{ch}:OFST {offset_v:.6E}V")
         if bandwidth_limit is not None:
-            self._res.write(f"BWL {ch},{'ON' if bandwidth_limit else 'OFF'}")
+            self._write(f"BWL {ch},{'ON' if bandwidth_limit else 'OFF'}")
         if displayed is not None:
-            self._res.write(f"{ch}:TRA {'ON' if displayed else 'OFF'}")
+            self._write(f"{ch}:TRA {'ON' if displayed else 'OFF'}")
         return self.channel(ch)  # type: ignore[arg-type]
 
     def _bandwidth_limits(self) -> dict[str, bool]:
@@ -298,9 +364,9 @@ class SiglentSDS1000XE:
         if trigger_delay_s is not None and not math.isfinite(trigger_delay_s):
             raise ValueError("trigger_delay_s must be a finite number")
         if token is not None:
-            self._res.write(f"TDIV {token}")
+            self._write(f"TDIV {token}")
         if trigger_delay_s is not None:
-            self._res.write(f"TRDL {trigger_delay_s:.6E}S")
+            self._write(f"TRDL {trigger_delay_s:.6E}S")
         return self.timebase()
 
     # -- trigger -------------------------------------------------------
@@ -355,16 +421,16 @@ class SiglentSDS1000XE:
         if target == "LINE" and (level_v is not None or slope is not None or coupling is not None):
             raise ValueError("The LINE source has no level, slope or coupling setting")
         if source is not None or present.type != "EDGE":
-            self._res.write(f"TRSE EDGE,SR,{target},HT,OFF")
+            self._write(f"TRSE EDGE,SR,{target},HT,OFF")
         if slope is not None:
-            self._res.write(f"{target}:TRSL {_SLOPE_CODES[slope]}")
+            self._write(f"{target}:TRSL {_SLOPE_CODES[slope]}")
         if coupling is not None:
-            self._res.write(f"{target}:TRCP {_TRIG_COUPLING_CODES[coupling]}")
+            self._write(f"{target}:TRCP {_TRIG_COUPLING_CODES[coupling]}")
         if level_v is not None:
-            self._res.write(f"{target}:TRLV {level_v:.6E}V")
+            self._write(f"{target}:TRLV {level_v:.6E}V")
         # A second TRMD SINGLE stops the acquisition (tested). Thus do not send the present sweep again.
         if sweep is not None and _SWEEP_CODES[sweep] != self._sweep_code():
-            self._res.write(f"TRMD {_SWEEP_CODES[sweep]}")
+            self._write(f"TRMD {_SWEEP_CODES[sweep]}")
         return self.trigger()
 
     # -- acquisition ---------------------------------------------------
@@ -390,13 +456,13 @@ class SiglentSDS1000XE:
                 "Select auto or normal to start."
             )
         if code != present:
-            self._res.write(f"TRMD {code}")
+            self._write(f"TRMD {code}")
             self._continuous_sweep = code
         return self.acquisition_state()
 
     def stop(self) -> str:
         self._sweep_code()  # remember the present continuous sweep for run()
-        self._res.write("STOP")
+        self._write("STOP")
         return self.acquisition_state()
 
     def single(self, timeout_s: float = 0.0, poll_s: float = 0.1) -> str:
@@ -409,7 +475,7 @@ class SiglentSDS1000XE:
         if not (0 <= timeout_s <= 60):
             raise ValueError("timeout_s must be from 0 to 60")
         if self._sweep_code() != "SINGLE":
-            self._res.write("TRMD SINGLE")
+            self._write("TRMD SINGLE")
         deadline = self._clock() + timeout_s
         state = self.acquisition_state()
         while timeout_s > 0 and state != "stopped" and self._clock() < deadline:
@@ -463,7 +529,7 @@ class SiglentSDS1000XE:
             raise ValueError(f"Unexpected sample rate {tb.sample_rate_sa_s} Sa/s")
         sparsing = max(1, math.ceil(memory_points / max_points))
         count = math.ceil(memory_points / sparsing)
-        self._res.write(f"WFSU SP,{sparsing},NP,{count},FP,0")
+        self._write(f"WFSU SP,{sparsing},NP,{count},FP,0", change=False)
         codes = self._read_block(f"{ch}:WF? DAT2")
         if not codes:
             raise IncompleteTransferError(f"The waveform of {ch} has no data points")
@@ -483,9 +549,179 @@ class SiglentSDS1000XE:
             voltages_v=[c * scale - offset for c in signed],
         )
 
+    # -- math ----------------------------------------------------------
+
+    def math(self) -> MathConfiguration:
+        reply = _payload(self._res.query("DEF?"))
+        m = re.fullmatch(r"EQN,['\"](.*)['\"]", reply.strip(), re.IGNORECASE)
+        if m is None:
+            raise ValueError(f"Unexpected reply to DEF?: {reply!r}")
+        equation = m[1].strip().upper()
+        if a := re.fullmatch(r"(C[1-4])([-+*/])(C[1-4])", equation):
+            operation, source1, source2 = _MATH_OPERATORS[a[2]], a[1], a[3]
+        elif f := re.fullmatch(r"(FFT|INTG|DIFF|SQRT)(C[1-4])", equation):
+            operation, source1, source2 = _MATH_FUNCTIONS[f[1]], f[2], None
+        else:
+            raise ValueError(f"Unexpected reply to DEF?: {reply!r}")
+        vdiv = position = None
+        if operation in ARITHMETIC_OPERATIONS:
+            vdiv = _number(self._res.query("MTVD?"), "MTVD?")
+            position = _number(self._res.query("MTVP?"), "MTVP?") / MATH_POSITION_PER_DIV
+        return MathConfiguration(
+            operation=operation, equation=equation, source1=source1, source2=source2,  # type: ignore[arg-type]
+            volts_per_div=vdiv, position_div=position,
+        )
+
+    def configure_math(
+        self,
+        operation: MathOperation,
+        source1: Channel,
+        source2: Channel | None = None,
+        volts_per_div: float | None = None,
+        position_div: float | None = None,
+    ) -> MathConfiguration:
+        """Set the math operation. The SDS1104X-E has no remote command to switch the math trace on or off."""
+        a = _channel(source1)
+        if operation in ARITHMETIC_OPERATIONS:
+            if source2 is None:
+                raise ValueError(f"{operation} needs source2")
+            b = _channel(source2)
+            equation = f"{a}{_MATH_SYMBOLS[operation]}{b}"
+        elif operation in _MATH_PREFIXES:
+            if source2 is not None:
+                raise ValueError(f"{operation} has only one source")
+            if volts_per_div is not None or position_div is not None:
+                raise ValueError(f"{operation} has no volts_per_div or position_div setting")
+            equation = f"{_MATH_PREFIXES[operation]}{a}"
+        else:
+            raise ValueError(f"operation must be one of {sorted([*ARITHMETIC_OPERATIONS, *_MATH_PREFIXES])}")
+        vdiv_token = None
+        if volts_per_div is not None:
+            vdiv_token = _math_vdiv_token(volts_per_div)
+        position = None
+        if position_div is not None:
+            if not (math.isfinite(position_div) and abs(position_div) * MATH_POSITION_PER_DIV <= MATH_POSITION_MAX):
+                raise ValueError(f"position_div must be from {-MATH_POSITION_MAX / 50:g} to {MATH_POSITION_MAX / 50:g}")
+            position = round(position_div * MATH_POSITION_PER_DIV)
+        self._write(f"DEF EQN,'{equation}'")
+        if vdiv_token is not None:
+            self._write(f"MTVD {vdiv_token}")
+        if position is not None:
+            self._write(f"MTVP {position}")
+        self._sleep(MATH_SETTLE_S)
+        return self.math()
+
+    def math_waveform(self, max_points: int = 1000) -> MathWaveform:
+        """Read the math waveform (add, subtract, multiply or divide) from the acquisition memory.
+
+        The oscilloscope ignores WFSU for the math trace and always sends all points (tested).
+        Thus the driver transfers all points and keeps every n-th point.
+        """
+        if not (1 <= max_points <= MAX_WAVEFORM_POINTS):
+            raise ValueError(f"max_points must be from 1 to {MAX_WAVEFORM_POINTS}")
+        cfg = self.math()
+        if cfg.operation not in ARITHMETIC_OPERATIONS or cfg.volts_per_div is None or cfg.position_div is None:
+            raise ValueError(
+                f"The math waveform is available only for {sorted(ARITHMETIC_OPERATIONS)}, not for {cfg.operation}. "
+                "Use scope_screenshot to see the trace."
+            )
+        tb = self.timebase()
+        source_points = int(_number(self._res.query(f"SANU? {cfg.source1}"), f"SANU? {cfg.source1}"))
+        if source_points < 1 or tb.sample_rate_sa_s <= 0:
+            raise ValueError("The acquisition memory has no data. Start an acquisition first.")
+        codes = self._read_block("MATH:WF? DAT2")
+        if not codes:
+            raise IncompleteTransferError("The math waveform has no data points")
+        decimation = max(1, math.ceil(len(codes) / max_points))
+        kept = codes[::decimation]
+        signed = [c - 256 if c > 127 else c for c in kept]
+        scale = cfg.volts_per_div / CODES_PER_DIVISION
+        offset = cfg.position_div * cfg.volts_per_div
+        # Programming guide: interpolation factor = points of the block / SANU of the source.
+        interval = source_points / (len(codes) * tb.sample_rate_sa_s)
+        return MathWaveform(
+            math=cfg, unit=_MATH_UNITS[cfg.operation], sample_count=len(signed), memory_points=len(codes),
+            decimation=decimation,
+            first_sample_time_s=-tb.trigger_delay_s - tb.seconds_per_div * HORIZONTAL_DIVISIONS / 2,
+            sample_interval_s=interval * decimation,
+            off_screen_samples=sum(abs(c) > SCREEN_CODE_LIMIT for c in signed),
+            values=[c * scale - offset for c in signed],
+        )
+
+    # -- cursors -------------------------------------------------------
+
+    def time_cursors(self, source: Channel) -> TimeCursors:
+        ch = _channel(source)
+        mode = _payload(self._res.query("CRMS?")).upper()
+        if mode not in ("OFF", "MANUAL", "TRACK", "ON"):
+            raise ValueError(f"Unexpected reply to CRMS?: {mode!r}")
+        mode_name = {"OFF": "off", "MANUAL": "manual", "ON": "track", "TRACK": "track"}[mode]
+        if mode_name != "manual":
+            return TimeCursors(mode=mode_name, source=ch, x1_s=None, x2_s=None, delta_s=None, inverse_delta_hz=None)  # type: ignore[arg-type]
+        # The order of the times in CRVA? HREL does not agree with the programming guide (tested).
+        # Thus read the positions with CRST? and only the differences with CRVA?.
+        positions = _pairs(self._res.query(f"{ch}:CRST? TREF,TDIF"), f"{ch}:CRST? TREF,TDIF")
+        hrel = [p.strip() for p in _payload(self._res.query(f"{ch}:CRVA? HREL")).split(",")]
+        if len(hrel) != 5 or hrel[0].upper() != "HREL":
+            raise ValueError(f"Unexpected reply to {ch}:CRVA? HREL: {hrel!r}")
+        try:
+            x1, x2 = positions["TREF"], positions["TDIF"]
+        except KeyError:
+            raise ValueError(f"Unexpected reply to {ch}:CRST? TREF,TDIF: {positions!r}") from None
+        return TimeCursors(
+            mode=mode_name, source=ch, x1_s=x1, x2_s=x2,  # type: ignore[arg-type]
+            delta_s=_number(hrel[1], f"{ch}:CRVA? HREL"), inverse_delta_hz=_number(hrel[2], f"{ch}:CRVA? HREL"),
+        )
+
+    def set_time_cursors(self, source: Channel, x1_s: float, x2_s: float) -> TimeCursors:
+        """Show the manual X cursors at x1_s and x2_s (relative to the trigger point) and read the difference."""
+        ch = _channel(source)
+        tb = self.timebase()
+        center = -tb.trigger_delay_s
+        half = tb.seconds_per_div * HORIZONTAL_DIVISIONS / 2
+        for name, value in (("x1_s", x1_s), ("x2_s", x2_s)):
+            if not (math.isfinite(value) and abs(value - center) <= half * (1 + 1e-9)):
+                raise ValueError(f"{name} must be in the screen range from {center - half:g} s to {center + half:g} s")
+        if _payload(self._res.query("CRMS?")).upper() != "MANUAL":
+            self._write("CRMS MANUAL")
+        if _payload(self._res.query("CRTY?")).upper() not in ("X", "X-Y"):
+            self._write("CRTY X")
+        self._write(f"{ch}:CRST TREF,{x1_s:.6E}S,TDIF,{x2_s:.6E}S")
+        return self.time_cursors(ch)  # type: ignore[arg-type]
+
+    def cursors_off(self) -> None:
+        self._write("CRMS OFF")
+
+    # -- screenshot ----------------------------------------------------
+
+    def screenshot_png(self) -> bytes:
+        """Read the screen (SCREEN_DUMP, a BMP file) and return it as a PNG file.
+
+        The screen shows changes with a delay of up to approximately 2 s (tested). Thus the driver
+        waits until SCREEN_SETTLE_S after its last change before it reads the screen.
+        """
+        if self._last_change is not None:
+            remaining = self._last_change + SCREEN_SETTLE_S - self._clock()
+            if remaining > 0:
+                self._sleep(remaining)
+        self._write("SCDP", change=False)
+        data = bytearray()
+        size = None
+        while size is None or len(data) < size:
+            chunk = self._res.read_raw()
+            if not chunk:
+                raise IncompleteTransferError(f"Incomplete screen dump: no more data after {len(data)} bytes")
+            data += chunk
+            if size is None and len(data) >= 6:
+                if data[:2] != b"BM":
+                    raise IncompleteTransferError(f"The screen dump is not a BMP file: {bytes(data[:16])!r}")
+                size = int.from_bytes(data[2:6], "little")
+        # The oscilloscope sends one byte more than the BMP size (tested): a terminating LF.
+        return bmp_to_png(bytes(data[:size]))
+
     def _read_block(self, query: str) -> bytes:
         """Send query and read the reply: [header,]#9<length><data>\\n\\n (programming guide WF?)."""
-        self._res.write(query)
+        self._write(query, change=False)
         buffer = bytearray()
         start = length = None
         while True:
@@ -558,4 +794,75 @@ def _tdiv_token(seconds_per_div: float) -> str:
                 return token
     raise ValueError(
         f"seconds_per_div must be a value of the 1-2-5 sequence from 1e-9 to 100 s, not {seconds_per_div!r}"
+    )
+
+
+def _math_vdiv_token(volts_per_div: float) -> str:
+    if math.isfinite(volts_per_div) and volts_per_div > 0:
+        for value, token in MATH_VDIVS.items():
+            if math.isclose(value, volts_per_div, rel_tol=1e-6):
+                return token
+    raise ValueError(
+        f"volts_per_div of the math trace must be a value of the 1-2-5 sequence from 0.0005 to 100, not {volts_per_div!r}"
+    )
+
+
+def _pairs(reply: str, query: str) -> dict[str, float]:
+    """Read "C1:CRST TREF,-5.00E-04S,TDIF,5.00E-04S" as {"TREF": -5e-4, "TDIF": 5e-4}."""
+    parts = [p.strip() for p in _payload(reply).split(",")]
+    if len(parts) % 2:
+        raise ValueError(f"Unexpected reply to {query}: {reply.strip()!r}")
+    return {name.upper(): _number(value, query) for name, value in zip(parts[::2], parts[1::2])}
+
+
+def bmp_to_png(bmp: bytes) -> bytes:
+    """Convert an uncompressed BMP file (16 bit RGB565 with bit fields, or 24 bit) to a PNG file.
+
+    The SDS1104X-E sends 800 x 480 pixels with 16 bit RGB565, top-down (tested).
+    """
+    if len(bmp) < 54 or bmp[:2] != b"BM":
+        raise ValueError("The data is not a BMP file")
+    offset = int.from_bytes(bmp[10:14], "little")
+    width = int.from_bytes(bmp[18:22], "little", signed=True)
+    height = int.from_bytes(bmp[22:26], "little", signed=True)
+    bpp = int.from_bytes(bmp[28:30], "little")
+    compression = int.from_bytes(bmp[30:34], "little")
+    top_down = height < 0
+    height = abs(height)
+    if width <= 0 or height == 0:
+        raise ValueError(f"Invalid BMP size {width} x {height}")
+    if bpp == 16 and compression == 3:
+        masks = tuple(int.from_bytes(bmp[54 + 4 * i:58 + 4 * i], "little") for i in range(3))
+        if masks != (0xF800, 0x07E0, 0x001F):
+            raise ValueError(f"Unsupported BMP bit fields {[hex(m) for m in masks]}")
+        table = [
+            bytes((((v >> 11) & 0x1F) * 255 // 31, ((v >> 5) & 0x3F) * 255 // 63, (v & 0x1F) * 255 // 31))
+            for v in range(65536)
+        ]
+    elif not (bpp == 24 and compression == 0):
+        raise ValueError(f"Unsupported BMP format: {bpp} bit, compression {compression}")
+    stride = (width * bpp // 8 + 3) & ~3
+    if len(bmp) < offset + stride * height:
+        raise ValueError("The BMP file is not complete")
+    rows = []
+    for y in range(height):
+        start = offset + stride * (y if top_down else height - 1 - y)
+        if bpp == 16:
+            pixels = array.array("H", bmp[start:start + width * 2])
+            if sys.byteorder == "big":
+                pixels.byteswap()  # BMP data is little-endian
+            rows.append(b"\x00" + b"".join([table[v] for v in pixels]))
+        else:
+            bgr = bmp[start:start + width * 3]
+            rgb = bytearray(bgr)
+            rgb[0::3], rgb[2::3] = bgr[2::3], bgr[0::3]
+            rows.append(b"\x00" + bytes(rgb))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return len(data).to_bytes(4, "big") + kind + data + zlib.crc32(kind + data).to_bytes(4, "big")
+
+    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes((8, 2, 0, 0, 0))
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(b"".join(rows), 6)) + chunk(b"IEND", b"")
     )
