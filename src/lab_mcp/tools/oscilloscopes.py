@@ -131,10 +131,11 @@ def scope_configure_trigger(
 @mcp.tool()
 def scope_run(
     sweep: Annotated[RunSweep | None, Field(description=(
-        "auto or normal. Necessary if the present sweep is single or stop. Otherwise the sweep stays the same."
+        "auto or normal. Without a value, the server uses the present sweep, or the sweep before the last "
+        "scope_stop. If the server does not know it (for example after a stop on the front panel), give a value."
     ))] = None,
 ) -> AcquisitionState:
-    """Start continuous acquisition (the same as the Run key)."""
+    """Start continuous acquisition with the auto or normal sweep."""
     with _guard(sds):
         return AcquisitionState(acquisition=sds.device().run(sweep))
 
@@ -180,7 +181,7 @@ def scope_measure(
     "Read the waveform samples of a channel from the acquisition memory, with the time and voltage scale. "
     "If the memory has more points than max_points, the server transfers only every n-th point (sparsing); "
     "this sets the waveform transfer setup (WFSU) of the oscilloscope. Stop the acquisition or use scope_single "
-    "first to read one stable acquisition. Samples with clipping are counted in clipped_samples."
+    "first to read one stable acquisition. Samples outside the screen can be clipped; they are counted in off_screen_samples."
 ))
 def scope_waveform(
     channel: ChannelParam,

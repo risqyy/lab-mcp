@@ -29,7 +29,10 @@ class FakeSDSResource:
         self.trlv = {ch: 0.0 for ch in (*CHANNELS, "EX", "EX5")}
         self.trsl = {ch: "POS" for ch in (*CHANNELS, "EX", "EX5")}
         self.trcp = {ch: "DC" for ch in (*CHANNELS, "EX", "EX5")}
-        self.sast = "Trig'd"
+        self.sast: str | None = "Trig'd"
+        # Number of TRMD? queries until a single acquisition triggers. None: no trigger.
+        self.trigger_after_polls: int | None = None
+        self.single_polls: int | None = None
         self.pava: dict[tuple[str, str], str] = {}
         self.memory: dict[str, bytes] = {"C1": bytes(range(0, 10))}
         self.wfsu = {"SP": 0, "NP": 0, "FP": 0}
@@ -81,12 +84,18 @@ class FakeSDSResource:
             self.trcp[m[1]] = m[2]
         elif m := re.fullmatch(r"(\S+):TRLV (\S+)V", msg):
             self.trlv[m[1]] = float(m[2])
-        elif m := re.fullmatch(r"TRMD (AUTO|NORM|SINGLE|STOP)", msg):
-            self.trmd = m[1]
-        elif msg == "ARM":
-            self.sast = "Ready" if self.trmd == "SINGLE" else "Trig'd"
+        elif msg in ("TRMD SINGLE", "ARM"):
+            # Like the real oscilloscope (firmware 8.3.6.1.37R17): ARM starts a single acquisition.
+            # A second TRMD SINGLE or ARM stops it, and then SAST? does not answer.
+            if self.trmd == "SINGLE":
+                self.trmd, self.sast = "STOP", None
+            else:
+                self.trmd, self.sast = "SINGLE", "Ready"
+                self.single_polls = self.trigger_after_polls
+        elif m := re.fullmatch(r"TRMD (AUTO|NORM)", msg):
+            self.trmd, self.sast = m[1], "Trig'd"
         elif msg == "STOP":
-            self.sast = "Stop"
+            self.trmd, self.sast = "STOP", "Stop"
         elif m := re.fullmatch(r"WFSU SP,(\d+),NP,(\d+),FP,(\d+)", msg):
             self.wfsu = {"SP": int(m[1]), "NP": int(m[2]), "FP": int(m[3])}
         elif m := re.fullmatch(r"(C[1-4]):WF\? DAT2", msg):
@@ -145,6 +154,11 @@ class FakeSDSResource:
         if m := re.fullmatch(r"SANU\? (C[1-4])", msg):
             return self._reply("SANU", f"{len(self.memory.get(m[1], b'')):.2E}", "pts")
         if msg == "TRMD?":
+            if self.trmd == "SINGLE" and self.single_polls is not None:
+                if self.single_polls == 0:
+                    self.trmd, self.sast, self.single_polls = "STOP", "Stop", None  # triggered
+                else:
+                    self.single_polls -= 1
             return self._reply("TRMD", self.trmd)
         if msg == "TRSE?":
             return self._reply("TRSE", self.trse)
@@ -155,6 +169,8 @@ class FakeSDSResource:
         if m := re.fullmatch(r"(\S+):TRCP\?", msg):
             return self._reply(f"{m[1]}:TRCP", self.trcp[m[1]])
         if msg == "SAST?":
+            if self.sast is None:
+                raise pyvisa.errors.VisaIOError(pyvisa.constants.StatusCode.error_timeout)
             return self._reply("SAST", self.sast)
         if m := re.fullmatch(r"(C[1-4]):PAVA\? (\w+)", msg):
             return self._reply(f"{m[1]}:PAVA", f"{m[2]},{self.pava.get((m[1], m[2]), '****')}")

@@ -28,7 +28,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); output voltage and frequency not measured |
-| SIGLENT SDS1104X-E | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes | No (simulated tests only) |
+| SIGLENT SDS1104X-E | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes | Partially (USB with WinUSB, firmware 8.3.6.1.37R17, open input and calibration signal on C1) |
 
 The "Supported" column describes software support. The "Tested" column describes checks on real instruments.
 Read the stated test scope before use. Protocol checks do not verify the output signal.
@@ -315,7 +315,7 @@ The reference is the [AFG-2000 Series User Manual](https://www.gwinstek.com/en-g
 | `scope_configure_channel` | Set the trace state, V/div, offset, coupling, probe attenuation and 20 MHz bandwidth limit of one channel. |
 | `scope_configure_timebase` | Set the time base (s/div) and the trigger delay. |
 | `scope_configure_trigger` | Set an edge trigger: source, slope, level, coupling and sweep (`auto`, `normal`, `single`). |
-| `scope_run` | Start continuous acquisition (`ARM`). |
+| `scope_run` | Start continuous acquisition with the `auto` or `normal` sweep (`TRMD`). |
 | `scope_stop` | Stop the acquisition (`STOP`). |
 | `scope_single` | Start one acquisition and wait for the trigger for a maximum time. |
 | `scope_measure` | Read automatic measurements of a channel, with unit and validity. |
@@ -344,8 +344,10 @@ Each data byte is a signed 8 bit code. The driver calculates the values as in th
   `sample_interval_s = sparsing / sample_rate_sa_s`.
 
 The programming guide example does not include the trigger delay. The driver includes it.
+A test with trigger delays from -0.5 ms to 0.5 ms confirmed this: the trigger edge is at 0 s within one sample interval.
 If the memory has more points than `max_points` (maximum 100000), the driver transfers only every n-th point.
-`clipped_samples` counts codes at the end of the 8 bit range (-128 and 127). The voltage of these samples is not correct.
+`off_screen_samples` counts codes more than 4 div from the screen center (more than 100 or less than -100).
+The voltage of these samples can be clipped. A signal above the screen gave codes of approximately 120, not 127.
 Stop the acquisition, or use `scope_single`, before you read a waveform. Then the waveform is from one acquisition.
 
 ### Limits
@@ -368,6 +370,18 @@ Not supported: trigger types other than edge, math and digital channels, FFT, de
 acquisition mode, cursors, and the built-in function generator.
 Other SDS1000X-E models (for example SDS1204X-E or SDS1202X-E) use the same programming guide, but the server does not accept them.
 
+### Instrument behavior
+
+Tests on firmware 8.3.6.1.37R17 found these differences from the programming guide:
+
+| Item | Behavior |
+|------|----------|
+| `ARM` | Starts a single acquisition, not a continuous acquisition. The driver does not use `ARM`. `scope_run` uses `TRMD AUTO` or `TRMD NORM`. |
+| `TRMD?` after `STOP` | Returns `STOP`. The previous sweep is not known. The driver remembers the last `auto` or `normal` sweep that it read or set. |
+| Second `TRMD SINGLE` | If a single acquisition waits for the trigger, a second `TRMD SINGLE` or `ARM` stops it. The driver does not send it again. |
+| `SAST?` | After such a stop, the oscilloscope does not answer `SAST?`. The driver reads `TRMD?` first and sends `SAST?` only if the sweep is not `STOP`. |
+| Out-of-range values | The oscilloscope sets the offset, trigger delay and trigger level to the nearest limit. The trigger level limit is relative to the offset. |
+
 ### Errors
 
 | Error | Behavior |
@@ -379,16 +393,30 @@ Other SDS1000X-E models (for example SDS1204X-E or SDS1202X-E) use the same prog
 
 ### Test scope
 
-The software tests use a simulated instrument with the reply formats of the programming guide.
-They examine the waveform decoding with the example values of the programming guide.
-The SDS1104X-E is not tested on a real instrument.
+The software tests use a simulated instrument with the reply formats of the programming guide
+and the instrument behavior above. They examine the waveform decoding with the example values of the programming guide.
+
+The tests on a real instrument used an SDS1104X-E with firmware 8.3.6.1.37R17,
+connected through USB with the WinUSB driver and pyvisa-py. These items are tested:
+
+| Test | Scope | Result |
+|------|-------|--------|
+| Protocol | Discovery, identification, status, all channel, time base and edge trigger settings, run, stop, single, measurements, waveform transfer with sparsing (10 to 20000 points from 700000 and 2800000 memory points), out-of-range values | All replies agree with the driver. |
+| Open input | Waveform voltage compared with the `mean` measurement of the oscilloscope, with 20 V offset | -17.6 V and -17.59 V |
+| Known signal | Probe on C1 (probe attenuation setting 1), connected to the calibration output (square wave, 1 kHz) | Waveform: top 3.00 V, base -0.02 V, 1000.1 Hz, 50.0 % duty cycle. Measurements: top 3.00 V, base -0.02 V, 999.9 Hz, 50.0 %, rise time 1.08 us. |
+| Time axis | Calibration signal with trigger delays 0, ±0.25 ms and ±0.5 ms | Trigger edge at 0 s within one sample interval |
+
+Not tested: the LAN connection, NI-VISA, channels C2 to C4 with a signal, AC coupling with a signal,
+the EX, EX5 and LINE trigger sources, and the bandwidth limit with a signal.
+The known-signal test used only the calibration output. It does not verify the accuracy of the oscilloscope.
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | The server does not find the SDS1104X-E | Install a USB-TMC driver (NI-VISA or WinUSB). Close EasyScopeX and other programs that use the instrument. |
-| `scope_run` refuses to start | The sweep is `single` or `stop`. Use `scope_run` with `sweep` `auto` or `normal`. |
+| `scope_run` refuses to start | The server does not know the previous sweep, for example after a stop on the front panel. Use `scope_run` with `sweep` `auto` or `normal`. |
+| `scope_single` returns `ready` | No trigger occurred in the timeout. Check the trigger source and level, or use a longer timeout. |
 | `valid` is false for a measurement | Make sure that the channel is on and shows at least one complete period of the signal. |
 
 ## Extend device support

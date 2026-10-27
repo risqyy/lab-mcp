@@ -29,8 +29,10 @@ CHANNELS: tuple[str, ...] = ("C1", "C2", "C3", "C4")
 # Horizontal grid of the SDS1000X-E: 14 divisions. Vertical: 25 codes for each division.
 HORIZONTAL_DIVISIONS = 14
 CODES_PER_DIVISION = 25
-# Data codes are signed 8 bit. The driver counts codes at the end of this range as clipped.
-CODE_MIN, CODE_MAX = -128, 127
+# The screen has 8 vertical divisions (4 above and 4 below the center), thus codes -100 to 100.
+# A signal above the screen gave codes of approximately 120, not 127 (tested). The driver counts
+# codes outside the screen, because their voltage can be clipped.
+SCREEN_CODE_LIMIT = 4 * CODES_PER_DIVISION
 # Vertical scale at the input (probe 1X), programming guide VOLT_DIV.
 VDIV_MIN_V, VDIV_MAX_V = 500e-6, 10.0
 ATTENUATIONS = (0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000)
@@ -149,7 +151,10 @@ class Waveform(_Model):
     volts_per_div: float
     offset_v: float
     probe_attenuation: float
-    clipped_samples: int = Field(description="Samples with a data code at the end of the 8 bit range. Their voltage is not correct.")
+    off_screen_samples: int = Field(description=(
+        "Samples outside the vertical screen range (more than 4 div from the center). Their voltage can be clipped. "
+        "If this is not 0, increase volts_per_div or change offset_v."
+    ))
     voltages_v: list[float] = Field(description="Voltage of each sample: code * volts_per_div / 25 - offset_v")
 
 
@@ -160,6 +165,9 @@ class SiglentSDS1000XE:
         self.model = model
         self._sleep = sleep
         self._clock = clock
+        # After STOP, TRMD? returns STOP and the previous sweep is not known (tested, firmware
+        # 8.3.6.1.37R17). The driver remembers the last continuous sweep that it read or set.
+        self._continuous_sweep: str | None = None
 
     @property
     def resource(self) -> SCPIResource:
@@ -170,7 +178,19 @@ class SiglentSDS1000XE:
 
     # -- status --------------------------------------------------------
 
+    def _sweep_code(self) -> str:
+        sweep = _payload(self._res.query("TRMD?")).upper()
+        if sweep not in _SWEEP_NAMES:
+            raise ValueError(f"Unexpected reply to TRMD?: {sweep!r}")
+        if sweep in ("AUTO", "NORM"):
+            self._continuous_sweep = sweep
+        return sweep
+
     def acquisition_state(self) -> str:
+        # In some stop states (for example after a second TRMD SINGLE), the oscilloscope does not
+        # answer SAST? (tested). TRMD? always answers. Thus send SAST? only if the sweep is not STOP.
+        if self._sweep_code() == "STOP":
+            return "stopped"
         reply = _payload(self._res.query("SAST?")).upper()
         try:
             return _SAST_NAMES[reply]
@@ -286,9 +306,7 @@ class SiglentSDS1000XE:
     # -- trigger -------------------------------------------------------
 
     def trigger(self) -> TriggerConfiguration:
-        sweep = _payload(self._res.query("TRMD?")).upper()
-        if sweep not in _SWEEP_NAMES:
-            raise ValueError(f"Unexpected reply to TRMD?: {sweep!r}")
+        sweep = self._sweep_code()
         trse = _payload(self._res.query("TRSE?"))
         fields = [p.strip().upper() for p in trse.split(",")]
         trig_type = fields[0]
@@ -344,28 +362,40 @@ class SiglentSDS1000XE:
             self._res.write(f"{target}:TRCP {_TRIG_COUPLING_CODES[coupling]}")
         if level_v is not None:
             self._res.write(f"{target}:TRLV {level_v:.6E}V")
-        if sweep is not None:
+        # A second TRMD SINGLE stops the acquisition (tested). Thus do not send the present sweep again.
+        if sweep is not None and _SWEEP_CODES[sweep] != self._sweep_code():
             self._res.write(f"TRMD {_SWEEP_CODES[sweep]}")
         return self.trigger()
 
     # -- acquisition ---------------------------------------------------
 
     def run(self, sweep: RunSweep | None = None) -> str:
-        """Start the acquisition. If the sweep is single or stop, sweep is necessary."""
-        if sweep is None:
-            present = _payload(self._res.query("TRMD?")).upper()
-            if present not in ("AUTO", "NORM"):
-                raise ValueError(
-                    f"The trigger sweep is {_SWEEP_NAMES.get(present, present)}. Select auto or normal to start."
-                )
-        elif sweep not in ("auto", "normal"):
+        """Start continuous acquisition with TRMD AUTO or TRMD NORM.
+
+        The driver does not use ARM: on the SDS1104X-E, ARM starts a single acquisition (tested).
+        Without sweep, the driver uses the last continuous sweep that it knows.
+        """
+        if sweep is not None and sweep not in ("auto", "normal"):
             raise ValueError("sweep must be auto or normal")
+        present = self._sweep_code()
+        if sweep is not None:
+            code = _SWEEP_CODES[sweep]
+        elif present in ("AUTO", "NORM"):
+            code = present
+        elif self._continuous_sweep is not None:
+            code = self._continuous_sweep
         else:
-            self._res.write(f"TRMD {_SWEEP_CODES[sweep]}")
-        self._res.write("ARM")
+            raise ValueError(
+                f"The trigger sweep is {_SWEEP_NAMES[present]} and the previous sweep is not known. "
+                "Select auto or normal to start."
+            )
+        if code != present:
+            self._res.write(f"TRMD {code}")
+            self._continuous_sweep = code
         return self.acquisition_state()
 
     def stop(self) -> str:
+        self._sweep_code()  # remember the present continuous sweep for run()
         self._res.write("STOP")
         return self.acquisition_state()
 
@@ -373,11 +403,13 @@ class SiglentSDS1000XE:
         """Start one acquisition. Wait a maximum of timeout_s until the oscilloscope stops after the trigger.
 
         Return the acquisition state. If no trigger occurs in timeout_s, the state is ready.
+        If a single acquisition waits for the trigger already, the driver does not start it again:
+        a second TRMD SINGLE stops the acquisition (tested).
         """
         if not (0 <= timeout_s <= 60):
             raise ValueError("timeout_s must be from 0 to 60")
-        self._res.write("TRMD SINGLE")
-        self._res.write("ARM")
+        if self._sweep_code() != "SINGLE":
+            self._res.write("TRMD SINGLE")
         deadline = self._clock() + timeout_s
         state = self.acquisition_state()
         while timeout_s > 0 and state != "stopped" and self._clock() < deadline:
@@ -447,7 +479,7 @@ class SiglentSDS1000XE:
             seconds_per_div=tb.seconds_per_div, trigger_delay_s=tb.trigger_delay_s,
             sample_rate_sa_s=tb.sample_rate_sa_s, volts_per_div=vdiv, offset_v=offset,
             probe_attenuation=attenuation,
-            clipped_samples=sum(c in (CODE_MIN, CODE_MAX) for c in signed),
+            off_screen_samples=sum(abs(c) > SCREEN_CODE_LIMIT for c in signed),
             voltages_v=[c * scale - offset for c in signed],
         )
 

@@ -133,30 +133,51 @@ def test_unexpected_trigger_reply(dev: SiglentSDS1000XE, res: FakeSDSResource) -
         dev.trigger()
 
 
-def test_run_stop_single(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+def test_run_after_stop_uses_previous_sweep(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+    res.trmd = "NORM"
     assert dev.stop() == "stopped"
+    assert res.trmd == "STOP"  # as the real oscilloscope: the sweep is not known after STOP
     assert dev.run() == "triggered"
-    assert res.writes == ["STOP", "ARM"]
-    assert dev.single(timeout_s=0) == "ready"
-    assert res.writes[-2:] == ["TRMD SINGLE", "ARM"]
+    assert res.writes == ["STOP", "TRMD NORM"]
+    assert "ARM" not in res.writes  # ARM starts a single acquisition on the real oscilloscope
 
 
-def test_run_after_single_needs_sweep(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
-    res.trmd = "SINGLE"
-    with pytest.raises(ValueError, match="Select auto or normal"):
+def test_run_keeps_running_sweep(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+    assert dev.run() == "triggered"
+    assert res.writes == []
+
+
+def test_run_without_known_sweep_needs_sweep(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+    res.trmd = "STOP"
+    with pytest.raises(ValueError, match="previous sweep is not known"):
         dev.run()
     assert dev.run("normal") == "triggered"
-    assert res.writes == ["TRMD NORM", "ARM"]
+    assert res.writes == ["TRMD NORM"]
 
 
-def test_single_waits_for_trigger(dev: SiglentSDS1000XE, res: FakeSDSResource, monkeypatch) -> None:
-    states = iter(["Ready", "Ready", "Stop"])
-    monkeypatch.setattr(res, "_reply", lambda header, value, unit="": f"SAST {next(states)}" if header == "SAST" else value)
+def test_single_without_trigger_returns_ready(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+    assert dev.single(timeout_s=1) == "ready"
+    assert res.writes == ["TRMD SINGLE"]
+
+
+def test_single_waits_for_trigger(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+    res.trigger_after_polls = 3
     assert dev.single(timeout_s=5) == "stopped"
 
 
-def test_single_timeout_returns_ready(dev: SiglentSDS1000XE) -> None:
-    assert dev.single(timeout_s=1) == "ready"
+def test_single_is_not_sent_two_times(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+    # A second TRMD SINGLE stops the real oscilloscope, and then SAST? does not answer.
+    dev.single(timeout_s=0)
+    assert dev.single(timeout_s=0) == "ready"
+    assert res.writes == ["TRMD SINGLE"]
+    dev.configure_trigger(sweep="single")
+    assert res.writes == ["TRMD SINGLE"]
+
+
+def test_state_in_stop_does_not_use_sast(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
+    res.trmd, res.sast = "STOP", None  # SAST? would time out
+    assert dev.acquisition_state() == "stopped"
+    assert dev.status().acquisition == "stopped"
 
 
 def test_measure_with_unit(dev: SiglentSDS1000XE, res: FakeSDSResource) -> None:
@@ -191,7 +212,7 @@ def test_waveform_decoding_agrees_with_programming_guide(dev: SiglentSDS1000XE, 
     wf = dev.waveform("C1")
     assert wf.voltages_v == pytest.approx([0.54, 0.42, 0.7, 3.04, -2.06])
     assert (wf.first_sample_time_s, wf.sample_interval_s) == (pytest.approx(-35e-9), pytest.approx(1e-9))
-    assert (wf.sample_count, wf.memory_points, wf.sparsing, wf.clipped_samples) == (5, 5, 1, 2)
+    assert (wf.sample_count, wf.memory_points, wf.sparsing, wf.off_screen_samples) == (5, 5, 1, 2)
     assert res.writes == ["WFSU SP,1,NP,5,FP,0", "C1:WF? DAT2"]
 
 
