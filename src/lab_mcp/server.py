@@ -23,12 +23,15 @@ from pydantic import BaseModel, Field
 from lab_mcp import discovery
 from lab_mcp.discovery import DiscoveredInstrument
 from lab_mcp.instruments.multimeters import DM3058_MODELS, RigolDM3058
+from lab_mcp.instruments.oscilloscopes import SDS_MODELS, SiglentSDS1000XE
 from lab_mcp.instruments.power_supplies import RIGOL_DP_MODELS, MansonHCS, RigolDP, SerialTransport
 from lab_mcp.instruments.signal_generators import AFG_MODELS, AFGSerialTransport, GWInstekAFG2000
 
 IO_TIMEOUT_MS = 5000
 # A multimeter query waits for the reading. Autorange of a resistance took 2.4 s in a test.
 DMM_IO_TIMEOUT_MS = 10000
+# Each read of a waveform block must complete in this time.
+SCOPE_IO_TIMEOUT_MS = 10000
 # The server has no authentication. Thus it accepts only local connections by default.
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10765
@@ -46,6 +49,8 @@ mcp = MCPServer(
         "Rigol DM3058 and DM3058E: digital multimeter, tools dmm_*. "
         "GW Instek AFG-2105: signal generator, tools sig_*. "
         "Read sig_status for the load setting and voltage limits before setting or enabling a signal. "
+        "SIGLENT SDS1104X-E: oscilloscope with four channels, tools scope_*. "
+        "Read scope_status before you change settings. Use scope_screenshot to see the screen. "
         "Set the voltage and the current limit before you switch an output on. "
         "Read the status before you switch an output on. "
         "After a change, wait 1 s before you measure. "
@@ -74,6 +79,11 @@ AFG_HINT = (
     "Connect the USB cable. Make sure that the operating system shows a serial port for the "
     "GW Instek AFG (USB CDC, not USB-TMC). Close other programs that use the port."
 )
+SCOPE_HINT = (
+    "Connect the USB cable and install a USB-TMC driver (NI-VISA, or WinUSB on Windows). "
+    "For LAN, connect the instrument to the same network as this computer. "
+    "Close other programs that use the instrument, for example EasyScopeX."
+)
 
 
 def _is_rigol_dp(inst: DiscoveredInstrument) -> bool:
@@ -90,6 +100,10 @@ def _is_hcs(inst: DiscoveredInstrument) -> bool:
 
 def _is_afg(inst: DiscoveredInstrument) -> bool:
     return inst.is_gwinstek and inst.model.upper() in AFG_MODELS
+
+
+def _is_sds(inst: DiscoveredInstrument) -> bool:
+    return inst.is_siglent and inst.model.upper() in SDS_MODELS
 
 
 class _Slot(Generic[T]):
@@ -201,7 +215,7 @@ def _open_rigol_dp(info: DiscoveredInstrument) -> tuple[RigolDP, Callable[[], No
     return dev, res.close
 
 
-def _visa_is_open(device: RigolDP | RigolDM3058) -> bool:
+def _visa_is_open(device: RigolDP | RigolDM3058 | SiglentSDS1000XE) -> bool:
     try:
         device.resource.session
     except pyvisa.errors.InvalidSession:
@@ -227,6 +241,13 @@ def _open_dm3058(info: DiscoveredInstrument) -> tuple[RigolDM3058, Callable[[], 
         res.close()
         raise
     return dev, res.close
+
+
+def _open_sds(info: DiscoveredInstrument) -> tuple[SiglentSDS1000XE, Callable[[], None]]:
+    res = pyvisa.ResourceManager(info.backend).open_resource(
+        info.address, read_termination="\n", write_termination="\n", timeout=SCOPE_IO_TIMEOUT_MS
+    )
+    return SiglentSDS1000XE(res, info.model.upper()), res.close
 
 
 def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]]:
@@ -260,7 +281,10 @@ dm3058 = _Slot[RigolDM3058](
 afg = _Slot[GWInstekAFG2000](
     "GW Instek AFG", _is_afg, _open_afg, discovery.identify_afg, AFG_HINT, lambda d: d.is_open
 )
-SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058, afg]
+sds = _Slot[SiglentSDS1000XE](
+    "SIGLENT SDS", _is_sds, _open_sds, _identify_visa_address, SCOPE_HINT, _visa_is_open
+)
+SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058, afg, sds]
 
 
 def _open_serial_ports() -> list[str]:
@@ -356,7 +380,7 @@ def main(argv: list[str] | None = None) -> None:
 
 # The tool modules register their tools on mcp. They import mcp, the slots and _guard
 # from this module, thus this import must be after these definitions.
-from lab_mcp.tools import multimeters, power_supplies, signal_generators  # noqa: E402, F401
+from lab_mcp.tools import multimeters, oscilloscopes, power_supplies, signal_generators  # noqa: E402, F401
 
 
 if __name__ == "__main__":

@@ -19,12 +19,14 @@ def inst(address: str, serial: str, model: str = "DP832", manufacturer: str = "R
     [
         ("USB0::0x1AB1::0x0E11::DP8C000000001::INSTR", True),
         ("USB0::6833::3601::DP8C000000001::INSTR", True),
+        ("USB0::0xF4EC::0xEE38::SDSMMGKQ800001::INSTR", True),
+        ("USB0::62700::61000::SDSMMGKQ800001::INSTR", True),
         ("USB0::0x0957::0x1796::MY000000::INSTR", False),
         ("TCPIP0::192.0.2.10::INSTR", False),
     ],
 )
-def test_is_rigol_usb(address: str, expected: bool) -> None:
-    assert discovery._is_rigol_usb(address) is expected
+def test_is_known_usb(address: str, expected: bool) -> None:
+    assert discovery._is_known_usb(address) is expected
 
 
 def test_host_of() -> None:
@@ -64,6 +66,14 @@ def test_discover_filters_non_rigol(fake_visa) -> None:
     fake_visa.addresses["@py"] = [lan]
     fake_visa.idn = {lan: inst(lan, "K", model="34465A", manufacturer="Keysight Technologies")}
     assert discovery.discover(scan_lan=False) == []
+
+
+def test_discover_finds_siglent_oscilloscope(fake_visa) -> None:
+    usb = "USB0::0xF4EC::0xEE38::SDSMMGKQ800001::INSTR"
+    fake_visa.addresses["@py"] = [usb]
+    fake_visa.idn = {usb: inst(usb, "SDSMMGKQ800001", model="SDS1104X-E", manufacturer="Siglent Technologies")}
+    [found] = discovery.discover(scan_lan=False)
+    assert (found.model, found.is_siglent, found.is_supported) == ("SDS1104X-E", True, True)
 
 
 def test_discover_falls_back_to_lan_scan(fake_visa) -> None:

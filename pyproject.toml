@@ -1,7 +1,7 @@
 [project]
 name = "lab-mcp"
 version = "0.1.0"
-description = "MCP server for laboratory instruments (Rigol DP832, Manson HCS series)"
+description = "MCP server for laboratory instruments"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
