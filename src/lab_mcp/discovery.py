@@ -3,7 +3,7 @@
 Discovery has three phases:
 
 1. VISA search on all usable backends (an installed IVI VISA, for example NI-VISA,
-   first, then pyvisa-py): USB-TMC devices with the Rigol vendor ID, and LAN
+   first, then pyvisa-py): USB-TMC devices with the Rigol or SIGLENT vendor ID, and LAN
    instruments that answer the VXI-11 broadcast. Each candidate gets ``*IDN?``.
 2. If phase 1 finds no instrument: a scan of the local /24 networks for TCP port 5555
    (Rigol raw SCPI). This is for networks that block the VXI-11 broadcast.
@@ -34,6 +34,7 @@ from lab_mcp.instruments.signal_generators import AFG_MODELS, AFGSerialTransport
 log = logging.getLogger(__name__)
 
 RIGOL_USB_VENDOR_IDS = ("0X1AB1", "6833")  # hex and decimal forms in VISA addresses, upper case
+SIGLENT_USB_VENDOR_IDS = ("0XF4EC", "62700")  # SDS1104X-E: 0xF4EC, product ID 0xEE38
 RIGOL_SCPI_PORT = 5555
 IDN_TIMEOUT_MS = 2000
 SCAN_CONNECT_TIMEOUT_S = 0.3
@@ -42,7 +43,7 @@ SCAN_WORKERS = 128
 HCS_USB_IDS = {(0x10C4, 0xEA60)}  # Silicon Labs CP210x
 AFG_USB_IDS = {(0x2184, 0x001C)}  # GW Instek AFG-2105, USB CDC
 SERIAL_PROBE_TIMEOUT_S = 0.5
-SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK")
+SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK", "SIGLENT")
 
 
 class DiscoveredInstrument(BaseModel):
@@ -66,6 +67,10 @@ class DiscoveredInstrument(BaseModel):
     @property
     def is_gwinstek(self) -> bool:
         return self.manufacturer.upper() == "GW INSTEK"
+
+    @property
+    def is_siglent(self) -> bool:
+        return self.manufacturer.upper().startswith("SIGLENT")
 
     @property
     def is_supported(self) -> bool:
@@ -229,12 +234,15 @@ def _candidate_addresses(backend: str) -> list[str]:
         log.debug("Listing resources on %s failed: %s", backend, exc)
         return []
     # Serial ports and GPIB are skipped: sending *IDN? to unknown serial devices is not safe.
-    return [r for r in resources if _is_rigol_usb(r) or r.upper().startswith("TCPIP")]
+    return [r for r in resources if _is_known_usb(r) or r.upper().startswith("TCPIP")]
 
 
-def _is_rigol_usb(address: str) -> bool:
+def _is_known_usb(address: str) -> bool:
     parts = address.upper().split("::")
-    return parts[0].startswith("USB") and len(parts) > 1 and parts[1] in RIGOL_USB_VENDOR_IDS
+    return (
+        parts[0].startswith("USB") and len(parts) > 1
+        and parts[1] in RIGOL_USB_VENDOR_IDS + SIGLENT_USB_VENDOR_IDS
+    )
 
 
 def _host_of(address: str) -> str | None:

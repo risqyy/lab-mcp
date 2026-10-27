@@ -8,9 +8,9 @@ The server finds supported instruments automatically. You usually do not need to
 
 ## Current capabilities
 
-- Control supported DC power supplies, digital multimeters, and function generators.
+- Control supported DC power supplies, digital multimeters, function generators, and oscilloscopes.
 - Find instruments through USB-TMC, LAN (SCPI), and USB serial connections, as supported by each model.
-- Read measurements and status, set supported parameters, and switch outputs on or off.
+- Read measurements, waveforms, and status, set supported parameters, and switch outputs on or off.
 - Connect an MCP client through Streamable HTTP or stdio.
 
 Support and test coverage differ by model. Some functions have only simulated tests or protocol checks.

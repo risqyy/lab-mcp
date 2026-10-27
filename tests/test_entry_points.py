@@ -8,7 +8,10 @@ from mcp import Client, StdioServerParameters
 
 from lab_mcp import server
 
-EXPECTED_TOOLS = {"discover_instruments", "all_outputs_off", "dp_status", "hcs_status", "sig_status", "sig_set"}
+EXPECTED_TOOLS = {
+    "discover_instruments", "all_outputs_off", "dp_status", "hcs_status", "sig_status", "sig_set", "scope_status",
+    "scope_waveform",
+}
 
 
 def _list_tools(args: list[str]) -> set[str]:

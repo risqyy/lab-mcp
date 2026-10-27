@@ -12,6 +12,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 - [Rigol DM3058 and DM3058E](#rigol-dm3058-and-dm3058e)
 - [Manson HCS](#manson-hcs)
 - [GW Instek AFG-2105](#gw-instek-afg-2105)
+- [SIGLENT SDS1104X-E](#siglent-sds1104x-e)
 - [Extend device support](#extend-device-support)
 
 ## Support status
@@ -27,6 +28,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); output voltage and frequency not measured |
+| SIGLENT SDS1104X-E | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes | No (simulated tests only) |
 
 The "Supported" column describes software support. The "Tested" column describes checks on real instruments.
 Read the stated test scope before use. Protocol checks do not verify the output signal.
@@ -54,7 +56,7 @@ The server does these steps:
 
 1. It searches all available VISA backends.
    It uses an installed IVI VISA (for example, NI-VISA) first, then pyvisa-py.
-2. It examines USB devices with the Rigol vendor ID (0x1AB1).
+2. It examines USB devices with the Rigol vendor ID (0x1AB1) or the SIGLENT vendor ID (0xF4EC).
 3. It examines LAN instruments that answer the VXI-11 broadcast.
 4. If steps 1 to 3 find no instrument, it scans the local networks for TCP port 5555.
    It scans only private networks, and only the /24 network of each interface.
@@ -70,7 +72,7 @@ At the next tool call, the server finds the instrument again.
 
 If there is more than one instrument of a type, the server does not select one.
 A command to the wrong instrument can be dangerous. The tools then send an error message with a list of the instruments.
-Use `dp_connect`, `hcs_connect`, `dmm_connect` or `sig_connect` with the serial number to select one.
+Use `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect` or `scope_connect` with the serial number to select one.
 
 ### Common tools
 
@@ -85,7 +87,7 @@ Use `dp_connect`, `hcs_connect`, `dmm_connect` or `sig_connect` with the serial 
 |---------|----------|
 | The server does not find a USB instrument  | Install a USB-TMC driver. Use NI-VISA, or use WinUSB on Windows (for example, with Zadig). |
 | The server does not find a LAN instrument  | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
-| The server finds more than one instrument  | Use `discover_instruments`. Then use the appropriate `dp_connect`, `hcs_connect`, `dmm_connect` or `sig_connect` tool with the serial number. |
+| The server finds more than one instrument  | Use `discover_instruments`. Then use the appropriate `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect` or `scope_connect` tool with the serial number. |
 
 ## Rigol DP800 and DP900
 
@@ -301,6 +303,94 @@ The reference is the [AFG-2000 Series User Manual](https://www.gwinstek.com/en-g
 |---------|----------|
 | The server does not find an AFG-2105 | Connect USB and check for a GW Instek serial port (USB CDC). Do not replace its driver with a USB-TMC driver. Close other programs that use the port. |
 
+## SIGLENT SDS1104X-E
+
+### Tools
+
+| Tool | Function |
+|------|----------|
+| `scope_connect` | Connect to an oscilloscope by serial number or by VISA address. |
+| `scope_identify` | Show the address, model, serial number and firmware. |
+| `scope_status` | Read the acquisition state, the time base, the trigger and the configuration of all channels. |
+| `scope_configure_channel` | Set the trace state, V/div, offset, coupling, probe attenuation and 20 MHz bandwidth limit of one channel. |
+| `scope_configure_timebase` | Set the time base (s/div) and the trigger delay. |
+| `scope_configure_trigger` | Set an edge trigger: source, slope, level, coupling and sweep (`auto`, `normal`, `single`). |
+| `scope_run` | Start continuous acquisition (`ARM`). |
+| `scope_stop` | Stop the acquisition (`STOP`). |
+| `scope_single` | Start one acquisition and wait for the trigger for a maximum time. |
+| `scope_measure` | Read automatic measurements of a channel, with unit and validity. |
+| `scope_waveform` | Read the waveform samples of a channel, with the time and voltage scale. |
+
+`scope_status`, `scope_identify` and `scope_measure` do not change settings.
+`scope_waveform` sets the waveform transfer setup (`WFSU`) before each transfer. It does not change other settings.
+
+### Connection
+
+The SDS1104X-E has a USB-TMC device port (USB ID F4EC:EE38) and a LAN port.
+On Windows, install a USB-TMC driver: NI-VISA, or WinUSB (for example, with Zadig).
+Without a driver, Windows shows the instrument with an error, and VISA does not find it.
+The server finds LAN instruments with the VXI-11 broadcast. The LAN scan for TCP port 5555 does not find the SDS1104X-E.
+If the broadcast is blocked, use `scope_connect` with the VISA address, for example `TCPIP0::192.0.2.20::INSTR`.
+
+### Waveform data
+
+The driver uses `<channel>:WF? DAT2` (programming guide PG01-E02D, SDS1000X-E section).
+The reply is a block `#9<length><data>` with an optional header, followed by two LF bytes.
+Each data byte is a signed 8 bit code. The driver calculates the values as in the programming guide:
+
+- Voltage: `code * volts_per_div / 25 - offset_v`. Codes above 127 are negative (`code - 256`).
+- Time of sample `i`: `first_sample_time_s + i * sample_interval_s`.
+  `first_sample_time_s = -trigger_delay_s - seconds_per_div * 14 / 2`.
+  `sample_interval_s = sparsing / sample_rate_sa_s`.
+
+The programming guide example does not include the trigger delay. The driver includes it.
+If the memory has more points than `max_points` (maximum 100000), the driver transfers only every n-th point.
+`clipped_samples` counts codes at the end of the 8 bit range (-128 and 127). The voltage of these samples is not correct.
+Stop the acquisition, or use `scope_single`, before you read a waveform. Then the waveform is from one acquisition.
+
+### Limits
+
+| Setting | Limit |
+|---------|-------|
+| Vertical scale | 500 uV/div to 10 V/div, multiplied by the probe attenuation. |
+| Probe attenuation | 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000. |
+| Coupling | `dc`, `ac`, `gnd` (1 MOhm input). |
+| Time base | 1 ns/div to 100 s/div in the 1-2-5 sequence. 14 horizontal divisions. |
+| Trigger | Edge trigger only. Sources C1 to C4, EX, EX5 and LINE. Level limit: 4.5 div for channels, 3 div for EX. |
+| Measurements | `pkpk`, `max`, `min`, `ampl`, `top`, `base`, `cmean`, `mean`, `stdev`, `vstd`, `rms`, `crms`, `ovsn`, `fpre`, `ovsp`, `rpre`, `per`, `freq`, `pwid`, `nwid`, `rise`, `fall`, `wid`, `duty`, `nduty`. |
+
+The server refuses values outside these limits before it sends a command.
+The oscilloscope sets an offset, a trigger delay or a trigger level outside its present limit to the nearest limit.
+The tools then return the value that the oscilloscope uses. Compare it with the requested value.
+If the oscilloscope cannot calculate a measurement, it sends `****`. The tool then returns `valid: false` and no value.
+
+Not supported: trigger types other than edge, math and digital channels, FFT, decoding, memory depth,
+acquisition mode, cursors, and the built-in function generator.
+Other SDS1000X-E models (for example SDS1204X-E or SDS1202X-E) use the same programming guide, but the server does not accept them.
+
+### Errors
+
+| Error | Behavior |
+|-------|----------|
+| Invalid setting or unknown channel | The tool refuses the value before it sends a command. |
+| Unexpected reply | The tool sends an error with the reply. The connection stays open. |
+| Timeout or incomplete waveform block | The tool sends a communication error and closes the connection. The next tool call connects again. |
+| Channel off or empty memory | `scope_waveform` sends an error. Switch the channel on and acquire a signal. |
+
+### Test scope
+
+The software tests use a simulated instrument with the reply formats of the programming guide.
+They examine the waveform decoding with the example values of the programming guide.
+The SDS1104X-E is not tested on a real instrument.
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| The server does not find the SDS1104X-E | Install a USB-TMC driver (NI-VISA or WinUSB). Close EasyScopeX and other programs that use the instrument. |
+| `scope_run` refuses to start | The sweep is `single` or `stop`. Use `scope_run` with `sweep` `auto` or `normal`. |
+| `valid` is false for a measurement | Make sure that the channel is on and shows at least one complete period of the signal. |
+
 ## Extend device support
 
 Run the tests:
@@ -325,17 +415,21 @@ src/lab_mcp/
 │   │   └── manson_hcs.py      # Manson HCS series
 │   ├── multimeters/
 │   │   └── rigol_dm3058.py    # Rigol DM3058 and DM3058E
-│   └── signal_generators/
-│       └── gwinstek_afg2000.py # GW Instek AFG-2105
+│   ├── signal_generators/
+│   │   └── gwinstek_afg2000.py # GW Instek AFG-2105
+│   └── oscilloscopes/
+│       └── siglent_sds1000xe.py # SIGLENT SDS1104X-E
 └── tools/
     ├── power_supplies.py      # dp_* and hcs_* tools
     ├── multimeters.py         # dmm_* tools
-    └── signal_generators.py   # sig_* tools
+    ├── signal_generators.py   # sig_* tools
+    └── oscilloscopes.py       # scope_* tools
 tests/
 ├── test_*.py                  # discovery, server and start of the server process
 ├── power_supplies/            # driver tests and simulated instruments
 ├── multimeters/
-└── signal_generators/
+├── signal_generators/
+└── oscilloscopes/
 ```
 
 ### Add an instrument
