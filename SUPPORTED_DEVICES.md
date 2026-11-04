@@ -13,6 +13,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 - [Manson HCS](#manson-hcs)
 - [GW Instek AFG-2105](#gw-instek-afg-2105)
 - [SIGLENT SDS1104X-E](#siglent-sds1104x-e)
+- [Rigol DS4014](#rigol-ds4014)
 - [Extend device support](#extend-device-support)
 
 ## Support status
@@ -29,6 +30,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); output voltage and frequency not measured |
 | SIGLENT SDS1104X-E | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes | Partially (USB with WinUSB, firmware 8.3.6.1.37R17, open input and calibration signal on C1) |
+| Rigol DS4014 | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes, without math and cursors | Partially (USB with NI-VISA, firmware 00.02.02.SP5, probe compensation signal on CH1) |
 
 The "Supported" column describes software support. The "Tested" column describes checks on real instruments.
 Read the stated test scope before use. Protocol checks do not verify the output signal.
@@ -42,6 +44,8 @@ and with DC voltage from a DP832 (1.5 V to 12.4 V: the difference to the DP832 m
 Measurements with components, current, and AC signals are not verified on the real multimeter.
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
+
+The SDS1104X-E and the DS4014 use the same `scope_*` tools. The DS4014 has no math and cursor tools.
 
 The AFG-2105 supports sine, square, ramp/triangle and noise. Arbitrary waveforms, modulation,
 sweep and the frequency counter are not supported by the tools. Other AFG-2000/2100 models
@@ -459,6 +463,114 @@ The known-signal test used only the calibration output. It does not verify the a
 | The math trace stays on the screen | Push the Math key on the front panel. The server cannot switch the math trace off. |
 | The screenshot shows an old state | A change on the front panel is not known to the server. Call `scope_screenshot` again after 2 s. |
 
+## Rigol DS4014
+
+### Tools
+
+The DS4014 uses the [`scope_*` tools of the SDS1104X-E](#siglent-sds1104x-e), with these differences:
+
+- `scope_math`, `scope_configure_math`, `scope_math_waveform`, `scope_cursors`, `scope_set_time_cursors` and `scope_cursors_off` are not supported.
+  They send an error. Use `scope_screenshot` to see math traces and cursors.
+- `scope_waveform` reads the 1400 points of the screen (`:WAVeform:MODE NORMal`). It does not read the deep memory.
+- `scope_measure` adds each measurement to the measurement display on the screen.
+- `scope_single` stops a running acquisition first.
+
+The channel names in the tools are `C1` to `C4`. On the oscilloscope, they are CH1 to CH4.
+
+### Connection
+
+The DS4014 has a USB-TMC device port (USB ID 1AB1:04B1) and a LAN port.
+On Windows, install NI-VISA or UltraScope. The tests used NI-VISA.
+If there is more than one oscilloscope (for example, an SDS1104X-E and a DS4014), use `scope_connect` with the serial number.
+
+### Waveform data
+
+The driver uses `:WAVeform:SOURce`, `:WAVeform:MODE NORMal`, `:WAVeform:FORMat BYTE`, `:WAVeform:PREamble?` and `:WAVeform:DATA?`
+(DS4000 programming guide). The reply is a block `#9<length><data>`, followed by one LF.
+The driver calculates the values with the preamble:
+
+- Voltage: `(code - YREFerence - YORigin) * YINCrement`. `YINCrement` is V/div / 32. Codes 0 and 255 are the screen limits.
+- Time of sample `i`: `XORigin + i * XINCrement`. `XORigin = offset - 7 * s/div`.
+  `:TIMebase:MAIN:OFFSet` is the time of the screen center after the trigger.
+  `trigger_delay_s` has the sign of the SDS1104X-E: `trigger_delay_s = -offset`.
+
+`off_screen_samples` counts codes 0 and 255. The voltage of these samples can be clipped.
+If `max_points` is less than 1400, the driver keeps every n-th point.
+
+### Limits
+
+| Setting | Limit |
+|---------|-------|
+| Vertical scale | 1 mV/div to 5 V/div at 1 MOhm, 1 mV/div to 1 V/div at 50 Ohm, multiplied by the probe attenuation. |
+| Probe attenuation | 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000. |
+| Coupling | `dc`, `ac`, `gnd`. The tools do not set the input impedance. With 50 Ohm input, `scope_status` shows `dc_50_ohm` or `ac_50_ohm`. |
+| Time base | 5 ns/div to 1000 s/div in the 1-2-5 sequence. 14 horizontal divisions. |
+| Trigger | Edge trigger only. Sources C1 to C4, EX, EX5 and LINE. Level limit: 6 div from the screen center for channels, 0.8 V for EX, 4 V for EX5. |
+| Measurements | `pkpk`, `max`, `min`, `ampl`, `top`, `base`, `mean`, `rms`, `crms`, `ovsp`, `rpre`, `per`, `freq`, `pwid`, `nwid`, `rise`, `fall`, `duty`, `nduty`. |
+
+The server refuses values outside these limits before it sends a command.
+It also refuses `cmean`, `stdev`, `vstd`, `ovsn`, `fpre` and `wid`, because the DS4014 has no command for them.
+If the oscilloscope cannot calculate a measurement, it sends `9.9e37`. The tool then returns `valid: false` and no value.
+
+Not supported: math, cursors, trigger types other than edge, the deep memory, decoding, saving and recalling setups,
+memory depth, acquisition mode, and the input impedance setting.
+Other DS4000 models (for example DS4024 or DS4054) use the same programming guide, but the server does not accept them.
+
+### Instrument behavior
+
+Tests on firmware 00.02.02.SP5 found this behavior:
+
+| Item | Behavior |
+|------|----------|
+| Unknown query | The oscilloscope sends no reply. The connection then stops until a timeout. The driver sends only known commands. |
+| `:TRIGger:STATus?` after `:RUN`, `:STOP` or `:SINGle` | Can send the previous state for up to 0.5 s. The driver waits for the new state. |
+| `:SINGle` | The point count of `:WAVeform:PREamble?` is 0 until the acquisition is complete. `scope_single` waits for `STOP` and a point count more than 0. |
+| `:SINGle` during a running acquisition | Sometimes stops the oscilloscope without data (1 of 6 tests). `scope_single` sends `:STOP` first. If the oscilloscope stops without data, it sends `:SINGle` one more time. |
+| `:RUN` with the single sweep | Sets the sweep to `AUTO`. |
+| `:MEASure:PDUTy?`, `NDUTy?`, `OVERshoot?`, `PREShoot?` | Send a ratio (0.5 for 50 %). The driver multiplies the value by 100. |
+| `:MEASure:<item>?` | Adds the item to the measurement display on the screen. |
+| `:DISPlay:DATA?` | Sends a BMP file with 800 x 480 pixels, 24 bit, and one LF. The transfer takes approximately 1.4 s. |
+
+`scope_screenshot` waits until 1 s after the last change of the server before it reads the screen.
+
+### Errors
+
+| Error | Behavior |
+|-------|----------|
+| Invalid setting, unknown channel or unsupported measurement | The tool refuses the value before it sends a command. |
+| Math or cursor tool | The tool sends an error. |
+| No completed acquisition | `scope_waveform` waits for a maximum of 2 s. Then it sends an error. |
+| Timeout or incomplete block | The tool sends a communication error and closes the connection. The next tool call connects again. |
+
+### Test scope
+
+The software tests use a simulated instrument with the reply formats of the programming guide and the instrument behavior above.
+
+The tests on a real instrument used a DS4014 with firmware 00.02.02.SP5, connected through USB with NI-VISA.
+The probe on CH1 (probe attenuation setting 10) was connected to the probe compensation output (square wave, 1 kHz).
+These items are tested:
+
+| Test | Scope | Result |
+|------|-------|--------|
+| Protocol | Discovery, identification, status, channel, time base and edge trigger settings with readback, run, stop, single, out-of-range values, unsupported measurements and tools | All replies agree with the driver. Three runs without an error. |
+| Measurements | 19 measurements of CH1 | Max 3.00 V, min -0.13 V, 1000.0 Hz, period 1.000 ms, duty cycle 50.0 %, rise time 6 us, overshoot 2.1 % (the same value on the screen) |
+| Waveform | 1400 points after `scope_single`, 1 V/div, 200 us/div | -0.13 V to 3.00 V (the same as the measurements), period 1.000 ms, trigger edge at 0 s within one sample interval |
+| Time axis | Trigger delay 0 and 200 us | Screen center at 0 s and -200 us |
+| Screenshot | Screen after the changes | PNG with 800 x 480 pixels |
+
+Not tested: the LAN connection, pyvisa-py, channels CH2 to CH4 with a signal, AC coupling and the 50 Ohm input with a signal,
+the EX, EX5 and LINE trigger sources, and the bandwidth limit with a signal.
+The test used only the probe compensation output. It does not verify the accuracy of the oscilloscope.
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| The server does not find the DS4014 | Install NI-VISA. Close UltraScope and other programs that use the instrument. |
+| The connection stops after an error | Call the tool again. The server connects again. If the oscilloscope does not reply, wait 5 s. |
+| `scope_waveform` sends "No completed acquisition" | The single acquisition waits for a trigger. Examine the trigger source and level, or use `scope_run` with `sweep` `auto`. |
+| `valid` is false for a measurement | Make sure that the channel is on and shows at least one complete period of the signal. Make sure that the signal is not clipped at the screen limits. |
+
 ## Extend device support
 
 Run the tests:
@@ -486,7 +598,8 @@ src/lab_mcp/
 │   ├── signal_generators/
 │   │   └── gwinstek_afg2000.py # GW Instek AFG-2105
 │   └── oscilloscopes/
-│       └── siglent_sds1000xe.py # SIGLENT SDS1104X-E
+│       ├── siglent_sds1000xe.py # SIGLENT SDS1104X-E
+│       └── rigol_ds4000.py    # Rigol DS4014
 └── tools/
     ├── power_supplies.py      # dp_* and hcs_* tools
     ├── multimeters.py         # dmm_* tools

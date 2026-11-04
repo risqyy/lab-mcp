@@ -21,9 +21,9 @@ SDS_INFO = DiscoveredInstrument(
 def fake_scope(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeSDSResource]:
     monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [])
     res = FakeSDSResource()
-    server.sds.set(SiglentSDS1000XE(res, sleep=lambda s: None), SDS_INFO)
+    server.scope.set(SiglentSDS1000XE(res, sleep=lambda s: None), SDS_INFO)
     yield res
-    server.sds.set(None)
+    server.scope.set(None)
 
 
 def call(name: str, **arguments):
@@ -90,11 +90,11 @@ def test_incomplete_transfer_closes_connection(fake_scope: FakeSDSResource) -> N
     fake_scope.raw_reply = [b"C1:WF DAT2,#9000000010\x01\x02"]
     with pytest.raises(ToolError, match="Communication with the instrument failed"):
         call("scope_waveform", channel="C1")
-    assert server.sds.connected_info is None
+    assert server.scope.connected_info is None
 
 
 def test_scope_auto_connect(monkeypatch: pytest.MonkeyPatch) -> None:
-    server.sds.set(None)
+    server.scope.set(None)
     res = FakeSDSResource()
     monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [SDS_INFO])
     opened = {}
@@ -114,10 +114,10 @@ def test_scope_auto_connect(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_scope_selects_by_serial(monkeypatch: pytest.MonkeyPatch) -> None:
-    server.sds.set(None)
+    server.scope.set(None)
     other = SDS_INFO.model_copy(update={"serial": "SDSMMGKQ800002", "address": "USB0::0xF4EC::0xEE38::SDSMMGKQ800002::INSTR"})
     monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [SDS_INFO, other])
-    with pytest.raises(ToolError, match="More than one SIGLENT SDS found"):
+    with pytest.raises(ToolError, match="More than one oscilloscope found"):
         call("scope_identify")
 
     class RM:
@@ -132,10 +132,10 @@ def test_scope_selects_by_serial(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_other_siglent_model_is_not_selected(monkeypatch: pytest.MonkeyPatch) -> None:
-    server.sds.set(None)
+    server.scope.set(None)
     other = SDS_INFO.model_copy(update={"model": "SDS2104X Plus"})
     monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [other] if kwargs["match"](other) else [])
-    with pytest.raises(ToolError, match="No SIGLENT SDS found.*USB-TMC driver"):
+    with pytest.raises(ToolError, match="No oscilloscope found.*USB-TMC driver"):
         call("scope_status")
 
 
