@@ -14,6 +14,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 - [GW Instek AFG-2105](#gw-instek-afg-2105)
 - [SIGLENT SDS1104X-E](#siglent-sds1104x-e)
 - [Rigol DS4014](#rigol-ds4014)
+- [Rigol DSA832E](#rigol-dsa832e)
 - [Extend device support](#extend-device-support)
 
 ## Support status
@@ -31,6 +32,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); output voltage and frequency not measured |
 | SIGLENT SDS1104X-E | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes | Partially (USB with WinUSB, firmware 8.3.6.1.37R17, open input and calibration signal on C1) |
 | Rigol DS4014 | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes, without math and cursors | Partially (USB with NI-VISA, firmware 00.02.02.SP5, probe compensation signal on CH1) |
+| Rigol DSA832E | Spectrum analyzer, 9 kHz to 3.2 GHz | USB-TMC, LAN (SCPI) | Yes, without tracking generator and advanced measurements | Protocol checks only (USB with NI-VISA, firmware 00.01.06.00.04, no signal at the RF input) |
 
 The "Supported" column describes software support. The "Tested" column describes checks on real instruments.
 Read the stated test scope before use. Protocol checks do not verify the output signal.
@@ -46,6 +48,8 @@ Measurements with components, current, and AC signals are not verified on the re
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
 The SDS1104X-E and the DS4014 use the same `scope_*` tools. The DS4014 has no math and cursor tools.
+
+The DSA832E is tested without a signal at the RF input. Amplitude and frequency accuracy with a known signal are not verified.
 
 The AFG-2105 supports sine, square, ramp/triangle and noise. Arbitrary waveforms, modulation,
 sweep and the frequency counter are not supported by the tools. Other AFG-2000/2100 models
@@ -76,7 +80,7 @@ At the next tool call, the server finds the instrument again.
 
 If there is more than one instrument of a type, the server does not select one.
 A command to the wrong instrument can be dangerous. The tools then send an error message with a list of the instruments.
-Use `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect` or `scope_connect` with the serial number to select one.
+Use `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect`, `scope_connect` or `sa_connect` with the serial number to select one.
 
 ### Common tools
 
@@ -91,7 +95,7 @@ Use `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect` or `scope_connect`
 |---------|----------|
 | The server does not find a USB instrument  | Install a USB-TMC driver. Use NI-VISA, or use WinUSB on Windows (for example, with Zadig). |
 | The server does not find a LAN instrument  | Connect the instrument and the computer to the same network. Make sure that a firewall does not block TCP port 5555. |
-| The server finds more than one instrument  | Use `discover_instruments`. Then use the appropriate `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect` or `scope_connect` tool with the serial number. |
+| The server finds more than one instrument  | Use `discover_instruments`. Then use the appropriate `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect`, `scope_connect` or `sa_connect` tool with the serial number. |
 
 ## Rigol DP800 and DP900
 
@@ -571,6 +575,139 @@ The test used only the probe compensation output. It does not verify the accurac
 | `scope_waveform` sends "No completed acquisition" | The single acquisition waits for a trigger. Examine the trigger source and level, or use `scope_run` with `sweep` `auto`. |
 | `valid` is false for a measurement | Make sure that the channel is on and shows at least one complete period of the signal. Make sure that the signal is not clipped at the screen limits. |
 
+## Rigol DSA832E
+
+### Tools
+
+| Tool | Function |
+|------|----------|
+| `sa_connect` | Connect to a spectrum analyzer by serial number or by VISA address. |
+| `sa_identify` | Show the address, model, serial number and firmware. |
+| `sa_status` | Read the sweep mode, the frequency range, the bandwidths, the amplitude settings and the trace modes. |
+| `sa_configure_frequency` | Set center and span, start and stop, or the full span. Span 0 selects zero span. |
+| `sa_configure_bandwidth` | Set the RBW, the VBW, the sweep time (each manual or auto), the sweep points, the detector and the EMI filter. |
+| `sa_configure_amplitude` | Set the reference level, the scale in dB/div, the input attenuation (manual or auto) and the preamplifier. |
+| `sa_configure_trace` | Set the mode of trace 1, 2 or 3: `clear_write`, `max_hold`, `min_hold`, `view`, `blank`, `video_average` or `power_average`. |
+| `sa_run` | Start the continuous sweep. |
+| `sa_single` | Do one single sweep and wait until it is complete. |
+| `sa_trace` | Read the amplitudes of a trace with the frequency of each value (time in zero span). |
+| `sa_marker_peak` | Switch a marker on and put it on a peak: `max`, `next`, `left`, `right` or `min`. |
+| `sa_set_marker` | Switch a marker on and put it at a frequency. Read the amplitude. |
+| `sa_markers_off` | Switch off all markers. |
+| `sa_screenshot` | Read the screen as a PNG image (800 x 480 pixels). |
+
+`sa_status`, `sa_identify` and `sa_screenshot` do not change settings.
+`sa_trace` sets only the data format of the transfer to ASCII (`:FORMat:TRACe:DATA ASCii`).
+`sa_marker_peak` and `sa_set_marker` set the marker to the normal type.
+
+### Connection
+
+The DSA832E has a USB-TMC device port (USB ID 1AB1:0960) and a LAN port.
+On Windows, install NI-VISA. The tests used NI-VISA.
+If there is more than one spectrum analyzer, use `sa_connect` with the serial number.
+
+### Input safety
+
+**CAUTION:** Do not apply a signal above the maximum input level to the RF input. Read the maximum level on the front panel and in the data sheet.
+The server cannot measure the input signal before a sweep. The settings do not protect the input.
+A low attenuation (for example 0 dB) and the preamplifier decrease the protection of the input mixer. Use them only for low, known signals.
+
+### Trace data
+
+The driver uses `:TRACe:DATA? TRACE<n>` with the ASCII format (DSA800 programming guide).
+The reply is a block `#9<length><data>` with comma-separated values, followed by one LF.
+The values are in the amplitude unit of the analyzer (`:UNIT:POWer?`).
+
+- Frequency of point `i`: `start_hz + i * (stop_hz - start_hz) / (points - 1)`.
+- Zero span: time of point `i`: `i * sweep_time_s / (points - 1)`.
+
+If the trace has more points than `max_points`, each value is the largest of n neighbor points.
+Thus the result keeps the peaks. The frequency of each value is the frequency of that largest point.
+In the continuous sweep, the trace can contain data from two sweeps. Use `sa_single` first.
+
+`sa_single` sets the single sweep (`:INITiate:CONTinuous OFF`) and starts it (`:INITiate:IMMediate`).
+Then it reads `:SENSe:SWEep:COUNt:CURRent?` until the value is equal to the sweep count.
+
+### Limits
+
+| Setting | Limit |
+|---------|-------|
+| Frequency | 0 Hz to 3.2 GHz. The analyzer sets the center frequency to 50 Hz minimum and to 3.2 GHz - 50 Hz maximum. |
+| Span | 0 Hz (zero span) or 100 Hz to 3.2 GHz. Center and span must give a range from 0 Hz to 3.2 GHz. |
+| RBW | 10 Hz to 1 MHz in the 1-3-10 sequence. With the EMI filter: 200 Hz, 9 kHz or 120 kHz. |
+| VBW | 1 Hz to 3 MHz in the 1-3-10 sequence. |
+| Sweep time | 20 us to 7500 s. The minimum also depends on the span (2.4 ms with 1 MHz span). The analyzer uses the nearest possible value. |
+| Sweep points | 101 to 3001. |
+| Reference level | -100 dBm to 20 dBm. The maximum also depends on the attenuation (0 dBm with 10 dB manual attenuation). |
+| Scale | 0.1 dB/div to 20 dB/div (log scale only). |
+| Attenuation | 0 dB to 30 dB, integer values. |
+| Traces and markers | Traces 1 to 3. Markers 1 to 4. |
+
+The server refuses values outside these limits before it sends a command, because the analyzer changes
+an invalid value to the nearest valid value without an error (for example, RBW 2 kHz to 3 kHz).
+The tools return the values that the analyzer uses. Compare them with the requested values.
+`sa_configure_amplitude` sets the reference level only with the unit dBm, and the scale only with the log scale.
+Change the unit and the scale type on the front panel.
+
+Not supported: the tracking generator, the advanced measurements (channel power, ACPR, OBW, TOI and others),
+VSWR, pass/fail limits, trace math, demodulation, the amplitude unit and the scale type, saving and recalling setups.
+Other DSA800 models (for example DSA815 or DSA875) use the same programming guide, but the server does not accept them.
+
+### Instrument behavior
+
+Tests on firmware 00.01.06.00.04 found this behavior:
+
+| Item | Behavior |
+|------|----------|
+| Unknown query | The analyzer sends no reply. The connection then stops until a timeout. Error -113 is in the error queue. The driver sends only known commands. |
+| `*OPT?` | No reply. `:SYSTem:OPTions?` sends the list of options. |
+| `:CALCulate:MARKer<n>:X?` | No reply when the marker is off. The driver reads the marker only after it switches the marker on. |
+| Invalid values | The analyzer changes them to the nearest valid value and sends no error. |
+| Quasi-peak detector | Switches the EMI filter on. The analyzer then ignores `:SENSe:BANDwidth:EMIFilter:STATe OFF` (error -220). Another detector does not switch the EMI filter off. The auto sweep time with 10 MHz span and RBW 9 kHz is 2000 s. |
+| `:INITiate:IMMediate` | `:SENSe:SWEep:COUNt:CURRent?` is 0 directly after the command, and equal to the sweep count after the sweep. `*OPC?` also waits for the end of the sweep, but it blocks the connection. |
+| `:TRACe:DATA?` | Takes approximately 2.4 s for 601 or 1001 points, in ASCII and in `REAL,32`. A trace in the mode `blank` also sends data. The driver refuses to read it. |
+| `:FORMat:BORDer?` | Sends `SWAP`: `REAL,32` data is little-endian. The driver uses ASCII. |
+| `:PRIVate:SNAP? BMP` | Not in the programming guide. Sends a BMP file with 800 x 480 pixels, 24 bit, after approximately 7 s. |
+| Peak table | `:TRACe:MATH:PEAK:DATA?` sent `ERR`. The driver uses markers. |
+
+### Errors
+
+| Error | Behavior |
+|-------|----------|
+| Invalid setting, trace or marker | The tool refuses the value before it sends a command. |
+| Trace in the mode `blank` | `sa_trace` sends an error. Set a trace mode first. |
+| Reference level with a unit other than dBm, or scale with the linear scale | `sa_configure_amplitude` sends an error. |
+| Timeout or incomplete block | The tool sends a communication error and closes the connection. The next tool call connects again. |
+
+### Test scope
+
+The software tests use a simulated instrument with the reply formats of the programming guide and the instrument behavior above.
+
+The tests on a real instrument used a DSA832E with firmware 00.01.06.00.04, connected through USB with NI-VISA.
+No signal was connected to the RF input. These items are tested:
+
+| Test | Scope | Result |
+|------|-------|--------|
+| Protocol | Discovery, identification, status, all frequency, bandwidth, detector, EMI filter, amplitude and trace settings with readback, single and continuous sweep, out-of-range values | All replies agree with the driver. |
+| Ranges | Each limit in the table above, with values inside and outside the limit | The analyzer changes values outside the limit to the limit. |
+| Trace | 1001 points in 10 MHz to 20 MHz, decimation to 100 values, zero span | Frequencies from 10 MHz to 20 MHz, time axis from 0 s to the sweep time |
+| Markers | Peak search and marker at 15 MHz, marker in zero span | Marker amplitude agrees with the trace value within 0.5 dB |
+| Screenshot | Screen after the changes | PNG with 800 x 480 pixels |
+
+Not tested: a signal at the RF input (frequency and amplitude accuracy), the LAN connection, pyvisa-py,
+the trace modes with a signal, the averages, and sweep counts other than 1.
+A hardware test with a known signal is described in a separate issue.
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| The server does not find the DSA832E | Install NI-VISA. Close Ultra Spectrum and other programs that use the instrument. |
+| The connection stops after an error | Call the tool again. The server connects again. |
+| `sa_single` returns `complete` false | The sweep did not end in the timeout. Read the sweep time with `sa_status` and use a longer timeout. |
+| `sa_configure_bandwidth` refuses an RBW | The EMI filter is on, for example after the quasi-peak detector. Set `emi_filter` to false. |
+| The reference level is lower than the requested value | The manual attenuation limits it. Set `attenuation_auto` to true or increase `attenuation_db`. |
+
 ## Extend device support
 
 Run the tests:
@@ -597,20 +734,24 @@ src/lab_mcp/
 │   │   └── rigol_dm3058.py    # Rigol DM3058 and DM3058E
 │   ├── signal_generators/
 │   │   └── gwinstek_afg2000.py # GW Instek AFG-2105
-│   └── oscilloscopes/
-│       ├── siglent_sds1000xe.py # SIGLENT SDS1104X-E
-│       └── rigol_ds4000.py    # Rigol DS4014
+│   ├── oscilloscopes/
+│   │   ├── siglent_sds1000xe.py # SIGLENT SDS1104X-E
+│   │   └── rigol_ds4000.py    # Rigol DS4014
+│   └── spectrum_analyzers/
+│       └── rigol_dsa800.py    # Rigol DSA832E
 └── tools/
     ├── power_supplies.py      # dp_* and hcs_* tools
     ├── multimeters.py         # dmm_* tools
     ├── signal_generators.py   # sig_* tools
-    └── oscilloscopes.py       # scope_* tools
+    ├── oscilloscopes.py       # scope_* tools
+    └── spectrum_analyzers.py  # sa_* tools
 tests/
 ├── test_*.py                  # discovery, server and start of the server process
 ├── power_supplies/            # driver tests and simulated instruments
 ├── multimeters/
 ├── signal_generators/
-└── oscilloscopes/
+├── oscilloscopes/
+└── spectrum_analyzers/
 ```
 
 ### Add an instrument
