@@ -26,12 +26,15 @@ from lab_mcp.instruments.multimeters import DM3058_MODELS, RigolDM3058
 from lab_mcp.instruments.oscilloscopes import DS4000_MODELS, SDS_MODELS, RigolDS4000, SiglentSDS1000XE
 from lab_mcp.instruments.power_supplies import RIGOL_DP_MODELS, MansonHCS, RigolDP, SerialTransport
 from lab_mcp.instruments.signal_generators import AFG_MODELS, AFGSerialTransport, GWInstekAFG2000
+from lab_mcp.instruments.spectrum_analyzers import DSA800_MODELS, RigolDSA800
 
 IO_TIMEOUT_MS = 5000
 # A multimeter query waits for the reading. Autorange of a resistance took 2.4 s in a test.
 DMM_IO_TIMEOUT_MS = 10000
 # Each read of a waveform block must complete in this time.
 SCOPE_IO_TIMEOUT_MS = 10000
+# The DSA832E sends the screen data approximately 7 s after :PRIVate:SNAP? BMP.
+SA_IO_TIMEOUT_MS = 15000
 # The server has no authentication. Thus it accepts only local connections by default.
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10765
@@ -51,6 +54,8 @@ mcp = MCPServer(
         "Read sig_status for the load setting and voltage limits before setting or enabling a signal. "
         "SIGLENT SDS1104X-E and RIGOL DS4014: oscilloscopes with four channels, tools scope_*. "
         "Read scope_status before you change settings. Use scope_screenshot to see the screen. "
+        "RIGOL DSA832E: spectrum analyzer, tools sa_*. Read sa_status before you change settings. "
+        "Use sa_single before sa_trace or sa_marker_peak to get the data of one complete sweep. "
         "Set the voltage and the current limit before you switch an output on. "
         "Read the status before you switch an output on. "
         "After a change, wait 1 s before you measure. "
@@ -84,6 +89,11 @@ SCOPE_HINT = (
     "For LAN, connect the instrument to the same network as this computer. "
     "Close other programs that use the instrument, for example EasyScopeX or UltraScope."
 )
+SA_HINT = (
+    "Connect the USB cable and install a USB-TMC driver (NI-VISA, or WinUSB on Windows). "
+    "For LAN, connect the instrument to the same network as this computer. "
+    "Close other programs that use the instrument, for example Ultra Spectrum."
+)
 
 
 def _is_rigol_dp(inst: DiscoveredInstrument) -> bool:
@@ -105,6 +115,10 @@ def _is_afg(inst: DiscoveredInstrument) -> bool:
 def _is_scope(inst: DiscoveredInstrument) -> bool:
     model = inst.model.upper()
     return (inst.is_siglent and model in SDS_MODELS) or (inst.is_rigol and model in DS4000_MODELS)
+
+
+def _is_spectrum_analyzer(inst: DiscoveredInstrument) -> bool:
+    return inst.is_rigol and inst.model.upper() in DSA800_MODELS
 
 
 class _Slot(Generic[T]):
@@ -216,7 +230,7 @@ def _open_rigol_dp(info: DiscoveredInstrument) -> tuple[RigolDP, Callable[[], No
     return dev, res.close
 
 
-def _visa_is_open(device: RigolDP | RigolDM3058 | SiglentSDS1000XE | RigolDS4000) -> bool:
+def _visa_is_open(device: RigolDP | RigolDM3058 | SiglentSDS1000XE | RigolDS4000 | RigolDSA800) -> bool:
     try:
         device.resource.session
     except pyvisa.errors.InvalidSession:
@@ -259,6 +273,18 @@ def _open_scope(info: DiscoveredInstrument) -> tuple[SiglentSDS1000XE | RigolDS4
     return dev, res.close
 
 
+def _open_spectrum_analyzer(info: DiscoveredInstrument) -> tuple[RigolDSA800, Callable[[], None]]:
+    res = pyvisa.ResourceManager(info.backend).open_resource(
+        info.address, read_termination="\n", write_termination="\n", timeout=SA_IO_TIMEOUT_MS
+    )
+    try:
+        dev = RigolDSA800(res, info.model.upper())
+    except Exception:
+        res.close()
+        raise
+    return dev, res.close
+
+
 def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]]:
     transport = SerialTransport.open(info.address)
     try:
@@ -294,7 +320,10 @@ afg = _Slot[GWInstekAFG2000](
 scope = _Slot[SiglentSDS1000XE | RigolDS4000](
     "oscilloscope", _is_scope, _open_scope, _identify_visa_address, SCOPE_HINT, _visa_is_open
 )
-SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058, afg, scope]
+spectrum_analyzer = _Slot[RigolDSA800](
+    "spectrum analyzer", _is_spectrum_analyzer, _open_spectrum_analyzer, _identify_visa_address, SA_HINT, _visa_is_open
+)
+SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058, afg, scope, spectrum_analyzer]
 
 
 def _open_serial_ports() -> list[str]:
@@ -390,7 +419,13 @@ def main(argv: list[str] | None = None) -> None:
 
 # The tool modules register their tools on mcp. They import mcp, the slots and _guard
 # from this module, thus this import must be after these definitions.
-from lab_mcp.tools import multimeters, oscilloscopes, power_supplies, signal_generators  # noqa: E402, F401
+from lab_mcp.tools import (  # noqa: E402, F401
+    multimeters,
+    oscilloscopes,
+    power_supplies,
+    signal_generators,
+    spectrum_analyzers,
+)
 
 
 if __name__ == "__main__":
