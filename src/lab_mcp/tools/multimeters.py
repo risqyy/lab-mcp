@@ -1,4 +1,4 @@
-"""MCP tools for digital multimeters: Rigol DM3058 and DM3058E (dmm_*)."""
+"""MCP tools for digital multimeters: Rigol DM3058 and DM3058E (dmm_*) and PeakTech 4365 (ptdmm_*)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,9 @@ from lab_mcp.instruments.multimeters.rigol_dm3058 import (
     MeasurementFunction,
     Speed,
 )
-from lab_mcp.server import READ_ONLY, _guard, dm3058, mcp
+from lab_mcp.instruments.multimeters.peaktech_4365 import READING_TIME_S as PT_READING_TIME_S
+from lab_mcp.instruments.multimeters.peaktech_4365 import PTReading, PTSeries
+from lab_mcp.server import READ_ONLY, _guard, dm3058, mcp, ptdmm, ptdmm_ports
 
 # The longest time that dmm_measure_series can take, so that a tool call does not block the server for long.
 MAX_SERIES_DURATION_S = 300.0
@@ -123,3 +125,73 @@ def dmm_measure_series(
                 "Use fewer readings, a shorter interval or a faster rate."
             )
         return dev.measure_series(count, interval_s)
+
+
+# -- PeakTech 4365 -------------------------------------------------------
+
+RsPort = Annotated[
+    str, Field(min_length=1, description="RS-232 port, for example /dev/serial/by-id/usb-... , /dev/ttyUSB0 or COM3")
+]
+
+
+@mcp.tool()
+def ptdmm_connect(port: RsPort | None = None) -> DiscoveredInstrument:
+    """Connect to a PeakTech 4365 handheld multimeter on an RS-232 port.
+
+    The server cannot find the multimeter automatically: the port is often a common USB-serial bridge,
+    and the protocol has no identification. Thus state the port. The server then uses this port again
+    after a communication error, and for discover_instruments.
+    Without port, the server uses the port that the server option or the last ptdmm_connect set.
+    """
+    with _guard(ptdmm):
+        if port is None:
+            return ptdmm.connect()
+        previous = list(ptdmm_ports)
+        if ptdmm.connected_info is not None and ptdmm.connected_info.address == port:
+            ptdmm.close()  # the port must be free for the probe
+        ptdmm_ports[:] = [port]
+        try:
+            return ptdmm.connect(address=port)
+        except Exception:
+            ptdmm_ports[:] = previous
+            raise
+
+
+@mcp.tool(annotations=READ_ONLY)
+def ptdmm_identify() -> DiscoveredInstrument:
+    """Show the connected PeakTech 4365: port and model. It has no serial number; the port is the serial."""
+    with _guard(ptdmm):
+        return ptdmm.info()
+
+
+@mcp.tool(annotations=READ_ONLY)
+def ptdmm_read() -> PTReading:
+    """Read the display of the PeakTech 4365: function, main value and the other values on the display.
+
+    The server cannot change the function or the range: the user sets them with the rotary switch.
+    Values are in SI units (V, A, Ohm, F, Hz). The temperature is in °C. value is None for an overload (OL),
+    for a text (for example diode "Open") and while the display is not stable (range change, capacitance).
+    For AC functions, the multimeter needs up to 1 s for a reply.
+    """
+    with _guard(ptdmm):
+        return ptdmm.device().read()
+
+
+@mcp.tool(annotations=READ_ONLY)
+def ptdmm_read_series(
+    count: Annotated[int, Field(ge=1, le=300, description="Number of readings")] = 10,
+    interval_s: Annotated[float, Field(ge=0, le=60, description="Time between the readings in s")] = 0.5,
+) -> PTSeries:
+    """Read a series of main values from the PeakTech 4365, and calculate the statistics.
+
+    The multimeter updates its display approximately 2 times each second. The series can take a maximum
+    of 300 s; each reading takes up to 1 s. Do not turn the rotary switch during the series.
+    """
+    with _guard(ptdmm):
+        duration = count * PT_READING_TIME_S + (count - 1) * interval_s
+        if duration > MAX_SERIES_DURATION_S:
+            raise ValueError(
+                f"The series takes up to {duration:.0f} s. The maximum is {MAX_SERIES_DURATION_S:.0f} s. "
+                "Use fewer readings or a shorter interval."
+            )
+        return ptdmm.device().read_series(count, interval_s)

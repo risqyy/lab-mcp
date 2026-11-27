@@ -10,6 +10,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 - [Connection and discovery](#connection-and-discovery)
 - [Rigol DP800 and DP900](#rigol-dp800-and-dp900)
 - [Rigol DM3058 and DM3058E](#rigol-dm3058-and-dm3058e)
+- [PeakTech 4365](#peaktech-4365)
 - [Manson HCS](#manson-hcs)
 - [ISO-TECH IPS](#iso-tech-ips)
 - [GW Instek AFG-2105](#gw-instek-afg-2105)
@@ -33,6 +34,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | ISO-TECH IPS-2010 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No                               |
 | Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
+| PeakTech 4365 | Handheld digital multimeter (display read-out only) | RS-232 (no automatic discovery) | Yes | Partially (RS-232 with a PL2303 adapter, all switch positions without a signal) |
 | GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); output voltage and frequency not measured |
 | SIGLENT SDS1104X-E | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes | Partially (USB with WinUSB, firmware 8.3.6.1.37R17, open input and calibration signal on C1) |
 | Rigol DS4014 | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes, without math and cursors | Partially (USB with NI-VISA, firmware 00.02.02.SP5, probe compensation signal on CH1) |
@@ -50,6 +52,9 @@ and with DC voltage from a DP832 (1.5 V to 12.4 V: the difference to the DP832 m
 Measurements with components, current, and AC signals are not verified on the real multimeter.
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
+
+The PeakTech 4365 support agrees with recorded replies of a real PeakTech 4365 for all positions of the rotary switch,
+except the lowest resistance range. The values are not compared with a reference instrument.
 
 The ISO-TECH IPS support agrees with the IPS series user manual and with an existing command-line tool for these instruments.
 The IPS-405 is tested on RS-232: all tools without a load, constant-current operation with a 0.1 Ω shunt (0.5 A to 2 A),
@@ -87,6 +92,8 @@ The server does these steps:
 8. It sends `L` to the RS-232 port of an ISO-TECH IPS, but only if you state the port and the model.
    Use `ips_connect`, or start the server with `--ips-port` and `--ips-model`.
    An RS-232 port has no USB ID, and the IPS protocol has no identification command.
+9. It sends CR to the RS-232 port of a PeakTech 4365, but only if you state the port.
+   Use `ptdmm_connect`, or start the server with `--ptdmm-port`.
 
 If an instrument does not answer, the server closes the connection.
 At the next tool call, the server finds the instrument again.
@@ -94,7 +101,11 @@ At the next tool call, the server finds the instrument again.
 If there is more than one instrument of a type, the server does not select one.
 A command to the wrong instrument can be dangerous. The tools then send an error message with a list of the instruments.
 Use `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect`, `scope_connect` or `sa_connect` with the serial number to select one.
-For an ISO-TECH IPS, use `ips_connect` with the port and the model.
+For an ISO-TECH IPS, use `ips_connect` with the port and the model. For a PeakTech 4365, use `ptdmm_connect` with the port.
+
+For USB-serial adapters on Linux, use the port name in `/dev/serial/by-id/`, for example
+`/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0`.
+The names `/dev/ttyUSB0`, `/dev/ttyUSB1` and so on depend on the sequence of connection. Thus they can change.
 
 ### Common tools
 
@@ -208,6 +219,75 @@ across a voltage source, the fuse of the multimeter blows. The server cannot det
 | Problem | Solution |
 |---------|----------|
 | The server does not find a multimeter      | Install a USB-TMC driver. The DM3058E has no LAN interface. Close other programs that use the instrument. |
+
+## PeakTech 4365
+
+The server reads the display of the multimeter. It cannot change the function or the range:
+the user sets them with the rotary switch.
+
+### Tools
+
+| Tool                     | Function                                                         |
+|--------------------------|------------------------------------------------------------------|
+| `ptdmm_connect`          | Connect to the multimeter by RS-232 port.                        |
+| `ptdmm_identify`         | Show the port and the model.                                     |
+| `ptdmm_read`             | Read the function, the main value and the other values on the display. |
+| `ptdmm_read_series`      | Read a series of main values and calculate the statistics.       |
+
+### Connection
+
+1. Connect the RS-232 cable of the multimeter to the computer, for example with a USB-serial adapter.
+2. Make sure that the user of the server can open the port. On Linux, add the user to the `dialout` group.
+3. Use `ptdmm_connect` with the port. You can also start the server with `--ptdmm-port`.
+
+The interface of the multimeter gets its supply from the control lines. The server sets DTR on and RTS off.
+The multimeter has no serial number. The server uses the port as the serial number.
+
+### Values
+
+The server gives the values in SI units: V, A, Ohm, F and Hz. The temperature is in °C (`temperature_f` in °F).
+The level is in dBm. hFE and the logic value have no unit.
+
+| Rotary switch            | `function`       | Other values (`secondary`, `history`)                     |
+|--------------------------|------------------|-----------------------------------------------------------|
+| Voltage DC (5 ranges)    | `dc_voltage`     | `history`: last 3 displayed values                        |
+| Voltage AC (5 ranges)    | `ac_voltage`     | `frequency`, `level` (dBm)                                |
+| Current DC (3 ranges)    | `dc_current`     | `history`                                                 |
+| Current AC (3 ranges)    | `ac_current`     | `frequency`                                               |
+| Resistance (6 ranges)    | `resistance`     | `history`                                                 |
+| Diode/continuity         | `diode`          | `status`: text, for example `Open` or `bAd`               |
+| Cap lo, Cap hi           | `capacitance`    | `history`                                                 |
+| Freq                     | `frequency`      | `ac_voltage`, `level` (dBm)                               |
+| Temp                     | `temperature`    | `temperature_f`                                           |
+| hFE                      | `hfe`            | `history`                                                 |
+| Logic                    | `logic`          | `frequency`, `value`. The main display is a text (`rdy`). |
+| S/O                      | `signal_output`  | `amplitude` (V)                                           |
+
+`value` is `None` for an overload (`overload: true`), for a text, and while the display is not stable.
+`display` contains the text on the display.
+
+### Instrument behavior
+
+These items were found in a test with a PeakTech 4365:
+
+| Item                                | Behavior                                                         |
+|-------------------------------------|------------------------------------------------------------------|
+| Request and reply                   | The computer sends CR. The multimeter sends 4 lines with 13 characters and CR. |
+| Reply time                          | 0.1 s for DC, temperature and hFE. 0.6 s to 1.0 s for AC, frequency, capacitance and logic. |
+| Change of DTR and RTS               | The multimeter sends one unwanted character. The server waits 0.3 s after it opens the port, and removes the received data. |
+| Turn of the rotary switch           | A reply can be incomplete. The server tries again one time.      |
+| Lines 2 to 4 (DC, resistance, capacitance, hFE) | The last 3 displayed values. The display moves them one line down each second. |
+| Overload                            | `OL` with a decimal point (`.OL`, `O.L`, `OL.`), also with a sign (`-O.L dBm`). |
+| Range change, capacitance measurement | The value has no decimal point (for example `00000`). The server gives no value. |
+| Other program on the same port      | The port settings are common to all programs. A program that opens the port with other settings stops the communication. |
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| The multimeter does not answer | Make sure that the multimeter is on. Make sure that no other program uses the port (on Linux: `fuser /dev/ttyUSB0`). Use the name in `/dev/serial/by-id/`. |
+| The communication stops after some time | Another program possibly opened the port. Stop that program. |
+| `ptdmm_read_series` stops with an error | The function changed during the series. Do not turn the rotary switch during a series. |
 
 ## Manson HCS
 
@@ -831,7 +911,8 @@ src/lab_mcp/
 │   │   ├── manson_hcs.py      # Manson HCS series
 │   │   └── isotech_ips.py     # ISO-TECH IPS series
 │   ├── multimeters/
-│   │   └── rigol_dm3058.py    # Rigol DM3058 and DM3058E
+│   │   ├── rigol_dm3058.py    # Rigol DM3058 and DM3058E
+│   │   └── peaktech_4365.py   # PeakTech 4365
 │   ├── signal_generators/
 │   │   └── gwinstek_afg2000.py # GW Instek AFG-2105
 │   ├── oscilloscopes/
@@ -841,7 +922,7 @@ src/lab_mcp/
 │       └── rigol_dsa800.py    # Rigol DSA832E
 └── tools/
     ├── power_supplies.py      # dp_*, hcs_* and ips_* tools
-    ├── multimeters.py         # dmm_* tools
+    ├── multimeters.py         # dmm_* and ptdmm_* tools
     ├── signal_generators.py   # sig_* tools
     ├── oscilloscopes.py       # scope_* tools
     └── spectrum_analyzers.py  # sa_* tools

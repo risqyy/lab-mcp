@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from lab_mcp import discovery
 from lab_mcp.discovery import DiscoveredInstrument
-from lab_mcp.instruments.multimeters import DM3058_MODELS, RigolDM3058
+from lab_mcp.instruments.multimeters import DM3058_MODELS, PeakTech4365, PTSerialTransport, RigolDM3058
 from lab_mcp.instruments.oscilloscopes import DS4000_MODELS, SDS_MODELS, RigolDS4000, SiglentSDS1000XE
 from lab_mcp.instruments.power_supplies import (
     IPS_MODELS,
@@ -60,6 +60,8 @@ mcp = MCPServer(
         "ISO-TECH IPS series (IPS-405, IPS-603, IPS-2010): DC power supply with one output on RS-232, tools ips_*. "
         "The server cannot find an IPS automatically. Use ips_connect with the port and the model. "
         "Rigol DM3058 and DM3058E: digital multimeter, tools dmm_*. "
+        "PeakTech 4365: handheld multimeter on RS-232, tools ptdmm_*. The server reads its display only: "
+        "the rotary switch sets the function and the range. Use ptdmm_connect with the port. "
         "GW Instek AFG-2105: signal generator, tools sig_*. "
         "Read sig_status for the load setting and voltage limits before setting or enabling a signal. "
         "SIGLENT SDS1104X-E and RIGOL DS4014: oscilloscopes with four channels, tools scope_*. "
@@ -95,6 +97,11 @@ IPS_HINT = (
     "Use ips_connect with the port and the model, or start the server with --ips-port and --ips-model. "
     "Use a straight RS-232 cable (not a null modem cable). Close other programs that use the port."
 )
+PTDMM_HINT = (
+    "The server does not send data to RS-232 ports without a configuration. "
+    "Use ptdmm_connect with the port, or start the server with --ptdmm-port. "
+    "Close other programs that use the port."
+)
 AFG_HINT = (
     "Connect the USB cable. Make sure that the operating system shows a serial port for the "
     "GW Instek AFG (USB CDC, not USB-TMC). Close other programs that use the port."
@@ -125,6 +132,10 @@ def _is_hcs(inst: DiscoveredInstrument) -> bool:
 
 def _is_ips(inst: DiscoveredInstrument) -> bool:
     return inst.is_isotech and inst.model.upper() in IPS_MODELS
+
+
+def _is_ptdmm(inst: DiscoveredInstrument) -> bool:
+    return inst.is_peaktech and inst.model == discovery.PEAKTECH_4365
 
 
 def _is_afg(inst: DiscoveredInstrument) -> bool:
@@ -176,7 +187,8 @@ class _Slot(Generic[T]):
         else:
             found = sorted(
                 discovery.discover(
-                    match=self._match, skip_serial_ports=_open_serial_ports(), ips_ports=dict(ips_ports)
+                    match=self._match, skip_serial_ports=_open_serial_ports(), ips_ports=dict(ips_ports),
+                    ptdmm_ports=list(ptdmm_ports),
                 ),
                 key=lambda i: i.serial,
             )
@@ -331,6 +343,20 @@ def _identify_ips_address(address: str) -> DiscoveredInstrument | None:
     return None if model is None else discovery.identify_ips(address, model)
 
 
+def _open_ptdmm(info: DiscoveredInstrument) -> tuple[PeakTech4365, Callable[[], None]]:
+    transport = PTSerialTransport.open(info.address)
+    try:
+        dev = PeakTech4365(transport)
+    except Exception:
+        transport.close()
+        raise
+    return dev, dev.close
+
+
+def _identify_ptdmm_address(address: str) -> DiscoveredInstrument | None:
+    return discovery.identify_ptdmm(address) if address in ptdmm_ports else None
+
+
 def _open_afg(info: DiscoveredInstrument) -> tuple[GWInstekAFG2000, Callable[[], None]]:
     transport = AFGSerialTransport.open(info.address)
     try:
@@ -346,6 +372,8 @@ lock = threading.RLock()
 # identification command. Thus the server uses only the ports that the user states
 # (ips_connect, or --ips-port and --ips-model).
 ips_ports: dict[str, str] = {}
+# RS-232 ports with a PeakTech 4365 (ptdmm_connect, or --ptdmm-port), for the same reason.
+ptdmm_ports: list[str] = []
 rigol_dp = _Slot[RigolDP](
     "Rigol DP", _is_rigol_dp, _open_rigol_dp, _identify_visa_address, RIGOL_DP_HINT, _visa_is_open
 )
@@ -353,6 +381,9 @@ hcs = _Slot[MansonHCS]("Manson HCS", _is_hcs, _open_hcs, discovery.identify_hcs,
 ips = _Slot[IsoTechIPS]("ISO-TECH IPS", _is_ips, _open_ips, _identify_ips_address, IPS_HINT)
 dm3058 = _Slot[RigolDM3058](
     "Rigol DM3058", _is_dm3058, _open_dm3058, _identify_visa_address, DMM_HINT, _visa_is_open
+)
+ptdmm = _Slot[PeakTech4365](
+    "PeakTech 4365", _is_ptdmm, _open_ptdmm, _identify_ptdmm_address, PTDMM_HINT
 )
 afg = _Slot[GWInstekAFG2000](
     "GW Instek AFG", _is_afg, _open_afg, discovery.identify_afg, AFG_HINT, lambda d: d.is_open
@@ -364,7 +395,7 @@ scope = _Slot[SiglentSDS1000XE | RigolDS4000](
 spectrum_analyzer = _Slot[RigolDSA800](
     "spectrum analyzer", _is_spectrum_analyzer, _open_spectrum_analyzer, _identify_visa_address, SA_HINT, _visa_is_open
 )
-SLOTS: list[_Slot] = [rigol_dp, hcs, ips, dm3058, afg, scope, spectrum_analyzer]
+SLOTS: list[_Slot] = [rigol_dp, hcs, ips, dm3058, ptdmm, afg, scope, spectrum_analyzer]
 
 
 def _open_serial_ports() -> list[str]:
@@ -404,14 +435,15 @@ class OutputOffResult(BaseModel):
 def discover_instruments(scan_lan: bool = True) -> list[DiscoveredInstrument]:
     """Find all supported instruments on USB, on the LAN and on serial ports.
 
-    An ISO-TECH IPS is found only on the port that ips_connect or the server options set.
+    An ISO-TECH IPS or a PeakTech 4365 is found only on the port that its connect tool or the server options set.
     If scan_lan is true and no instrument answers the VISA search, the server scans the local networks.
     The list includes the instruments that are connected now.
     """
     with _guard():
         connected = [s.connected_info for s in SLOTS if s.connected_info is not None]
         found = discovery.discover(
-            scan_lan=scan_lan, skip_serial_ports=_open_serial_ports(), ips_ports=dict(ips_ports)
+            scan_lan=scan_lan, skip_serial_ports=_open_serial_ports(), ips_ports=dict(ips_ports),
+            ptdmm_ports=list(ptdmm_ports),
         )
         known = {i.serial for i in connected}
         return connected + [i for i in found if i.serial not in known]
@@ -462,11 +494,17 @@ def main(argv: list[str] | None = None) -> None:
         "--ips-model", type=str.upper, choices=list(IPS_MODELS),
         help="Model of the ISO-TECH IPS power supply at --ips-port",
     )
+    parser.add_argument(
+        "--ptdmm-port", metavar="PORT",
+        help="RS-232 port of a PeakTech 4365 multimeter, for example /dev/ttyUSB0 or COM3",
+    )
     args = parser.parse_args(argv)
     if (args.ips_port is None) != (args.ips_model is None):
         parser.error("use --ips-port and --ips-model together")
     if args.ips_port is not None:
         ips_ports[args.ips_port] = args.ips_model
+    if args.ptdmm_port is not None:
+        ptdmm_ports[:] = [args.ptdmm_port]
 
     if args.transport == "stdio":
         mcp.run()

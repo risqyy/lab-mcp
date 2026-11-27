@@ -9,7 +9,7 @@ from mcp import Client, StdioServerParameters
 from lab_mcp import server
 
 EXPECTED_TOOLS = {
-    "discover_instruments", "all_outputs_off", "dp_status", "hcs_status", "ips_status", "sig_status", "sig_set", "scope_status",
+    "discover_instruments", "all_outputs_off", "dp_status", "hcs_status", "ips_status", "ptdmm_read", "sig_status", "sig_set", "scope_status",
     "scope_waveform",
 }
 

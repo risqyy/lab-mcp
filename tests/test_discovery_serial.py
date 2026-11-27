@@ -7,7 +7,7 @@ from lab_mcp.discovery import DiscoveredInstrument
 
 
 def inst(address: str, serial: str, model: str = "DP832", manufacturer: str = "RIGOL TECHNOLOGIES"):
-    backend = "serial" if manufacturer in ("MANSON", "ISO-TECH") else "@py"
+    backend = "serial" if manufacturer in ("MANSON", "ISO-TECH", "PEAKTECH") else "@py"
     return DiscoveredInstrument(
         address=address, backend=backend, manufacturer=manufacturer, model=model, serial=serial, firmware=""
     )
@@ -229,3 +229,52 @@ def test_discover_probes_only_configured_ips_ports(fake_phases, monkeypatch):
     )
     assert probed == [("/dev/ttyS0", "IPS-405")]
     assert [(i.address, i.model) for i in found] == [("/dev/ttyS0", "IPS-405")]
+
+
+@pytest.mark.parametrize("reply,found", [
+    ([b"DC 009.16  mV", b"   097.57    ", b"     O.L     ", b"   000.00    "], True),
+    ([b"DC 001.00  XYZ", b"             ", b"             ", b"             "], False),
+    (TimeoutError("no reply"), False),
+])
+def test_identify_ptdmm_closes_probe(monkeypatch, reply, found):
+    class Probe:
+        closed = False
+
+        def query(self):
+            if isinstance(reply, Exception):
+                raise reply
+            return [line.decode() for line in reply]
+
+        def close(self):
+            self.closed = True
+
+    probe = Probe()
+    monkeypatch.setattr(discovery.PTSerialTransport, "open", classmethod(lambda cls, device: probe))
+    info = discovery.identify_ptdmm("/dev/ttyUSB0")
+    assert probe.closed
+    assert (info is not None) == found
+    if info:
+        assert (info.manufacturer, info.model, info.serial) == ("PEAKTECH", "4365", "/dev/ttyUSB0")
+        assert info.is_peaktech and info.is_supported
+
+
+def test_identify_ptdmm_port_cannot_open(monkeypatch):
+    def fail(cls, device):
+        raise OSError("access denied")
+
+    monkeypatch.setattr(discovery.PTSerialTransport, "open", classmethod(fail))
+    assert discovery.identify_ptdmm("/dev/ttyUSB0") is None
+
+
+def test_discover_probes_only_configured_ptdmm_ports(fake_phases, monkeypatch):
+    probed = []
+
+    def identify(device):
+        probed.append(device)
+        return inst(device, device, model="4365", manufacturer="PEAKTECH")
+
+    monkeypatch.setattr(discovery, "identify_ptdmm", identify)
+    assert discovery.discover() == []
+    found = discovery.discover(ptdmm_ports=["/dev/ttyUSB0", "/dev/ttyUSB1"], skip_serial_ports=["/dev/ttyusb1"])
+    assert probed == ["/dev/ttyUSB0"]
+    assert [i.model for i in found] == ["4365"]
