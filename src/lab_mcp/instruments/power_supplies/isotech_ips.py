@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Protocol
+from typing import Literal, Protocol
 
 import serial
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveFloat
@@ -44,6 +44,11 @@ BAUD_RATE = 2400
 TIMEOUT_S = 2.0
 # The instrument needs time to apply a set command (value from the isotech CLI).
 SET_DELAY_S = 0.5
+# Tolerances for the CV/CC mode. The protocol does not report the mode. The IPS-405
+# specification: current 2 mA resolution, 0.1 % + 5 digits; voltage 10 mV resolution.
+CC_CURRENT_TOLERANCE_A = 0.01
+CC_CURRENT_TOLERANCE_REL = 0.002
+CV_VOLTAGE_TOLERANCE_V = 0.05
 
 # Reply to "L": Vvv.vvAa.aaaWwww.wUuuIi.iiPpppFffffff. A lower-case U, I or P shows that
 # the limit is in the setting mode on the front panel.
@@ -126,6 +131,10 @@ class IPSMeasurement(_Model):
     current: float = Field(description="Output current in A")
     power: float = Field(description="Output power in W")
     output_enabled: bool = Field(description="State of the output relay")
+    mode: Literal["CV", "CC"] | None = Field(
+        description="Constant voltage or constant current. The protocol does not report the mode: the server "
+        "derives it from the current limit and the voltage setpoint. None: the output is off."
+    )
 
 
 class IPSReading(_Model):
@@ -256,7 +265,27 @@ class IsoTechIPS:
 
     def measure(self) -> IPSMeasurement:
         r = self.read()
-        return IPSMeasurement(voltage=r.voltage, current=r.current, power=r.power, output_enabled=r.output_enabled)
+        return IPSMeasurement(
+            voltage=r.voltage, current=r.current, power=r.power, output_enabled=r.output_enabled,
+            mode=self._mode(r),
+        )
+
+    def _mode(self, r: IPSReading) -> Literal["CV", "CC"] | None:
+        """Derive the CV/CC mode: CC if the current is at the current limit.
+
+        At a small voltage setpoint, the voltage in CC is almost equal to the setpoint
+        (IPS-405 with a 0.1 Ohm shunt: 0.10 V setpoint, 0.10 V at 0.5 A). Thus the current
+        is the criterion. Only at a current limit near 0 A, the voltage is the criterion:
+        without a load, the current is then also "at the limit".
+        """
+        if not r.output_enabled:
+            return None
+        tolerance = CC_CURRENT_TOLERANCE_A + CC_CURRENT_TOLERANCE_REL * r.current_limit
+        if r.current < r.current_limit - tolerance:
+            return "CV"
+        if r.current_limit > tolerance or self._voltage_setpoint is None:
+            return "CC"
+        return "CC" if r.voltage < self._voltage_setpoint - CV_VOLTAGE_TOLERANCE_V else "CV"
 
     def status(self) -> IPSStatus:
         r = self.read()

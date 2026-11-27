@@ -165,6 +165,39 @@ def test_command_switches_remote_mode_on(dev: IsoTechIPS, t: FakeIPSTransport) -
     assert dev.status().remote is True
 
 
+def test_mode_cv_and_cc(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    dev.set_current_limit(2.0)
+    dev.set_voltage(12.0)
+    assert dev.measure().mode is None  # output off
+    dev.set_output(True)
+    assert dev.measure().mode == "CV"  # 1.2 A at 10 Ohm, below 2 A
+    dev.set_current_limit(0.5)
+    m = dev.measure()
+    assert (m.mode, m.voltage, m.current) == ("CC", 5.0, 0.5)
+
+
+def test_mode_at_current_limit_is_cc_also_near_setpoint(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    t.load_ohms = 0.19  # like the 0.1 Ohm shunt with cables: 0.10 V would give 0.53 A
+    dev.set_current_limit(0.5)
+    dev.set_voltage(0.10)
+    dev.set_output(True)
+    m = dev.measure()
+    assert (m.mode, m.voltage) == ("CC", 0.10)  # 0.095 V shows as the setpoint
+
+
+def test_mode_without_load_at_zero_current_limit_is_cv(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    t.load_ohms = float("inf")
+    dev.set_current_limit(0.0)
+    dev.set_voltage(5.0)
+    dev.set_output(True)
+    assert dev.measure().mode == "CV"
+
+
+def test_mode_with_unknown_setpoint_uses_current(t: FakeIPSTransport) -> None:
+    t.voltage, t.current_limit, t.load_ohms, t.output = 12.0, 0.5, 10.0, True
+    assert IsoTechIPS(t, "IPS-405").measure().mode == "CC"
+
+
 def test_store(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
     dev.set_voltage(3.3)
     dev.store()

@@ -44,7 +44,7 @@ def test_ips_set_output_measure(fake_ips: FakeIPSTransport) -> None:
     assert (st["voltage_setpoint"], st["current_limit"], st["output_enabled"]) == (12.0, 2.0, False)
     assert call("ips_output", enabled=True).structured_content["output_enabled"] is True
     m = call("ips_measure").structured_content
-    assert (m["voltage"], m["current"], m["power"], m["output_enabled"]) == (12.0, 1.2, 14.4, True)
+    assert (m["voltage"], m["current"], m["power"], m["output_enabled"], m["mode"]) == (12.0, 1.2, 14.4, True, "CV")
     assert call("ips_output", enabled=False).structured_content["output_enabled"] is False
     assert fake_ips.output is False
 

@@ -267,7 +267,7 @@ The IPS-405, IPS-603 and IPS-2010 use the same RS-232 protocol.
 | `ips_connect`            | Connect to an IPS by RS-232 port and model.                      |
 | `ips_identify`           | Show the port and the model.                                     |
 | `ips_status`             | Read the output state, remote mode, limits and limits of the model. |
-| `ips_measure`            | Measure the voltage, current and power.                          |
+| `ips_measure`            | Measure the voltage, current and power, and derive the CV/CC mode. |
 | `ips_set`                | Set the voltage and the current limit.                           |
 | `ips_set_limits`         | Set the voltage limit and the power limit.                       |
 | `ips_output`             | Switch the output on or off.                                     |
@@ -323,6 +323,7 @@ These items were found in a test with an IPS-405 without a load:
 | Voltage setpoint above the voltage limit | The instrument decreases the setpoint to the voltage limit. The server refuses the setpoint before it sends it. |
 | Remote mode                         | Each command on RS-232 switches remote mode on. After the REM key switched it off, the next command switches it on again. The user manual states that set commands need remote mode. You do not have to push the REM key. |
 | Constant-current operation          | With a 0.1 Ω shunt, the measured current is equal to the current limit (0.5 A, 1 A, 2 A). The voltage is the output voltage. |
+| CV/CC mode                          | The protocol does not report the mode. The server reports CC if the current is at the current limit (tolerance 10 mA + 0.2 %). At a small voltage setpoint, the voltage in CC is almost equal to the setpoint. Thus the voltage is not a usable criterion. Tested with the 0.1 Ω shunt: 0.10 V with 0.5 A, 0.6 A and 2 A, and 2 V with 1 A. |
 | `EEP` (`ips_store`)                 | The instrument uses the stored settings after a power cycle. The output is off after power-on. |
 
 These items are from the IPS user manual. They are not tested on a real instrument:

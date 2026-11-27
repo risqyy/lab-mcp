@@ -295,9 +295,10 @@ def ips_status() -> IPSStatus:
 
 @mcp.tool(annotations=READ_ONLY)
 def ips_measure() -> IPSMeasurement:
-    """Measure the output voltage (V), current (A) and power (W).
+    """Measure the output voltage (V), current (A) and power (W), and derive the CV/CC mode.
 
     While the output is off, the instrument reports the voltage setpoint, not 0 V.
+    The protocol does not report the mode. The server derives it from the current limit and the voltage setpoint.
     After you change a setpoint or the output, wait 1 s before you measure.
     """
     with _guard(ips):

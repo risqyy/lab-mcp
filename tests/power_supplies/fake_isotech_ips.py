@@ -30,8 +30,10 @@ class FakeIPSTransport:
     def _output_values(self) -> tuple[float, float]:
         if not self.output:
             return self.voltage, 0.0  # like the real instrument: the setpoint, not 0 V
-        current = min(self.voltage / self.load_ohms, self.current_limit)
-        return current * self.load_ohms, current
+        current = self.voltage / self.load_ohms
+        if current <= self.current_limit:
+            return self.voltage, current  # CV
+        return self.current_limit * self.load_ohms, self.current_limit  # CC
 
     def query(self, command: str) -> str:
         self.commands.append(command)
