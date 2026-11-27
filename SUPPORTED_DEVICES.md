@@ -11,6 +11,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 - [Rigol DP800 and DP900](#rigol-dp800-and-dp900)
 - [Rigol DM3058 and DM3058E](#rigol-dm3058-and-dm3058e)
 - [Manson HCS](#manson-hcs)
+- [ISO-TECH IPS](#iso-tech-ips)
 - [GW Instek AFG-2105](#gw-instek-afg-2105)
 - [SIGLENT SDS1104X-E](#siglent-sds1104x-e)
 - [Rigol DS4014](#rigol-ds4014)
@@ -27,6 +28,9 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | Rigol DP932U | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Rigol DP932E | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
+| ISO-TECH IPS-405 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No (simulated instrument only)    |
+| ISO-TECH IPS-603 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No                                |
+| ISO-TECH IPS-2010 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No                               |
 | Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); output voltage and frequency not measured |
@@ -46,6 +50,9 @@ and with DC voltage from a DP832 (1.5 V to 12.4 V: the difference to the DP832 m
 Measurements with components, current, and AC signals are not verified on the real multimeter.
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
+
+The ISO-TECH IPS support agrees with the IPS series user manual and with an existing command-line tool for these instruments.
+It is not tested on a real instrument.
 
 The SDS1104X-E and the DS4014 use the same `scope_*` tools. The DS4014 has no math and cursor tools.
 
@@ -74,6 +81,9 @@ The server does these steps:
 7. It examines GW Instek USB CDC ports (USB ID 2184:001C) with `*IDN?`.
    It accepts the AFG-2105 and removes the `SN:` prefix from its serial number.
    The server does not send data to serial ports with other USB IDs.
+8. It sends `L` to the RS-232 port of an ISO-TECH IPS, but only if you state the port and the model.
+   Use `ips_connect`, or start the server with `--ips-port` and `--ips-model`.
+   An RS-232 port has no USB ID, and the IPS protocol has no identification command.
 
 If an instrument does not answer, the server closes the connection.
 At the next tool call, the server finds the instrument again.
@@ -81,6 +91,7 @@ At the next tool call, the server finds the instrument again.
 If there is more than one instrument of a type, the server does not select one.
 A command to the wrong instrument can be dangerous. The tools then send an error message with a list of the instruments.
 Use `dp_connect`, `hcs_connect`, `dmm_connect`, `sig_connect`, `scope_connect` or `sa_connect` with the serial number to select one.
+For an ISO-TECH IPS, use `ips_connect` with the port and the model.
 
 ### Common tools
 
@@ -241,6 +252,75 @@ These items were found in a test with an HCS-3404:
 | Problem | Solution |
 |---------|----------|
 | The server does not find a Manson HCS      | Set the MODE switch on the rear panel to "Normal". Make sure that the instrument is on. Make sure that the operating system shows a COM port for the CP210x bridge. If not, install the Silicon Labs CP210x driver. Close other programs that use the port. |
+
+## ISO-TECH IPS
+
+The IPS-405, IPS-603 and IPS-2010 use the same RS-232 protocol.
+
+### Tools
+
+| Tool                     | Function                                                         |
+|--------------------------|------------------------------------------------------------------|
+| `ips_connect`            | Connect to an IPS by RS-232 port and model.                      |
+| `ips_identify`           | Show the port and the model.                                     |
+| `ips_status`             | Read the output state, remote mode, limits and limits of the model. |
+| `ips_measure`            | Measure the voltage, current and power.                          |
+| `ips_set`                | Set the voltage and the current limit.                           |
+| `ips_set_limits`         | Set the voltage limit and the power limit.                       |
+| `ips_output`             | Switch the output on or off.                                     |
+| `ips_store`              | Save the present settings to the EEPROM of the instrument.       |
+
+### Connection
+
+1. Connect the IPS to an RS-232 port of the computer. Use a straight DB9 cable (pin 2 to pin 2, pin 3 to pin 3).
+   Do not use a null modem cable. The wiring diagram in the IPS user manual is not correct.
+2. Make sure that the user of the server can open the port. On Linux, add the user to the `dialout` group.
+3. Push the REM key on the front panel. The user manual states that the instrument accepts set commands only in remote mode.
+4. Use `ips_connect` with the port and the model, for example `/dev/ttyS0` and `IPS-405`.
+   You can also start the server with `--ips-port /dev/ttyS0 --ips-model IPS-405`.
+
+The interface of the instrument gets its supply from pin 4 (DTR). The server sets DTR when it opens the port.
+The IPS has no serial number. The server uses the port as the serial number.
+
+### Limits and safety
+
+The protocol has no identification command. Thus the server cannot examine the model.
+Make sure that the stated model is correct. The server uses the limits of the stated model:
+
+| Model    | Voltage  | Current | Power |
+|----------|----------|---------|-------|
+| IPS-405  | 0–40 V   | 0–5 A   | 200 W |
+| IPS-603  | 0–60 V   | 0–3.5 A | 200 W |
+| IPS-2010 | 0–20 V   | 0–10 A  | 200 W |
+
+The server refuses a voltage setpoint above the voltage limit (U) of the instrument.
+The voltage limit and the power limit accept only whole numbers (steps of 1 V and 1 W).
+The voltage setpoint and the current limit use steps of 0.01.
+
+**CAUTION:** The IPS protocol cannot read the voltage setpoint.
+The server shows the last voltage setpoint that it set. Before the first set command, the setpoint is unknown.
+
+After each change of the output, the current limit, the voltage limit or the power limit, the server reads the instrument again.
+If the instrument did not accept the change, the tool sends an error. The server cannot examine a change of the voltage setpoint.
+
+### Instrument behavior
+
+These items are from the IPS user manual and from the existing command-line tool. They are not tested on a real instrument.
+
+| Item                                | Behavior                                                         |
+|-------------------------------------|------------------------------------------------------------------|
+| Set command                         | The instrument sends no reply. The server waits 0.5 s after each set command. |
+| Remote mode                         | Set commands operate only in remote mode (REM key). In remote mode, the front panel controls are locked. |
+| Power limit                         | A change of the power limit can also change the current limit.   |
+| Lower-case U, I or P in the status  | The limit is in the setting mode on the front panel.            |
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| The IPS does not answer | Make sure that the instrument is on. Use a straight cable, not a null modem cable. Make sure that the port and the model are correct. Close other programs that use the port. |
+| The instrument does not accept a change | Push the REM key on the front panel. Then `ips_status` shows `remote: true`. |
+| `Permission denied` on the port | Add the user to the `dialout` group (Linux). Then log in again. |
 
 ## GW Instek AFG-2105
 
@@ -729,7 +809,8 @@ src/lab_mcp/
 ├── instruments/
 │   ├── power_supplies/
 │   │   ├── rigol_dp.py        # Rigol DP800 and DP900 series
-│   │   └── manson_hcs.py      # Manson HCS series
+│   │   ├── manson_hcs.py      # Manson HCS series
+│   │   └── isotech_ips.py     # ISO-TECH IPS series
 │   ├── multimeters/
 │   │   └── rigol_dm3058.py    # Rigol DM3058 and DM3058E
 │   ├── signal_generators/
@@ -740,7 +821,7 @@ src/lab_mcp/
 │   └── spectrum_analyzers/
 │       └── rigol_dsa800.py    # Rigol DSA832E
 └── tools/
-    ├── power_supplies.py      # dp_* and hcs_* tools
+    ├── power_supplies.py      # dp_*, hcs_* and ips_* tools
     ├── multimeters.py         # dmm_* tools
     ├── signal_generators.py   # sig_* tools
     ├── oscilloscopes.py       # scope_* tools

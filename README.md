@@ -10,6 +10,7 @@ The server finds supported instruments automatically. You usually do not need to
 
 - Control supported DC power supplies, digital multimeters, function generators, oscilloscopes, and spectrum analyzers.
 - Find instruments through USB-TMC, LAN (SCPI), and USB serial connections, as supported by each model.
+- Connect RS-232 instruments without automatic discovery (ISO-TECH IPS). You must state the port and the model.
 - Read measurements, waveforms, and status, set supported parameters, and switch outputs on or off.
 - Connect an MCP client through Streamable HTTP or stdio.
 
@@ -73,6 +74,8 @@ http://127.0.0.1:10765/mcp
 | `--port` | `10765` | Set the HTTP port. |
 | `--host` | `127.0.0.1` | Set the HTTP address. |
 | `--transport` | `http` | Select `http` or `stdio`. |
+| `--ips-port` | none | Set the RS-232 port of an ISO-TECH IPS power supply, for example `/dev/ttyS0`. |
+| `--ips-model` | none | Set the model at `--ips-port`: `IPS-405`, `IPS-603` or `IPS-2010`. |
 
 ### Connect an MCP client
 

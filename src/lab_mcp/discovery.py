@@ -9,6 +9,8 @@ Discovery has three phases:
    (Rigol raw SCPI). This is for networks that block the VXI-11 broadcast.
 3. Known serial USB devices: Manson HCS gets ``GMOD``, GW Instek AFG gets ``*IDN?``.
    Other serial ports are not used, because a probe sends data to the port.
+4. Configured ISO-TECH IPS ports get ``L``. An RS-232 port has no USB ID. Thus discovery
+   uses only the ports and models that the user states (``ips_ports``).
 
 Discovery returns only instruments that answer.
 """
@@ -20,7 +22,7 @@ import logging
 import re
 import socket
 import warnings
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 
 import psutil
@@ -28,6 +30,8 @@ import pyvisa
 from pydantic import BaseModel, ConfigDict
 from serial.tools import list_ports
 
+from lab_mcp.instruments.power_supplies.isotech_ips import MODELS as IPS_MODELS
+from lab_mcp.instruments.power_supplies.isotech_ips import IPSSerialTransport, parse_status_line
 from lab_mcp.instruments.power_supplies.manson_hcs import SerialTransport
 from lab_mcp.instruments.signal_generators import AFG_MODELS, AFGSerialTransport
 
@@ -43,7 +47,10 @@ SCAN_WORKERS = 128
 HCS_USB_IDS = {(0x10C4, 0xEA60)}  # Silicon Labs CP210x
 AFG_USB_IDS = {(0x2184, 0x001C)}  # GW Instek AFG-2105, USB CDC
 SERIAL_PROBE_TIMEOUT_S = 0.5
-SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK", "SIGLENT")
+# The IPS reply to "L" has 37 characters at 2400 baud (approximately 0.15 s).
+IPS_PROBE_TIMEOUT_S = 1.0
+ISOTECH = "ISO-TECH"
+SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK", "SIGLENT", ISOTECH)
 
 
 class DiscoveredInstrument(BaseModel):
@@ -73,6 +80,10 @@ class DiscoveredInstrument(BaseModel):
         return self.manufacturer.upper().startswith("SIGLENT")
 
     @property
+    def is_isotech(self) -> bool:
+        return self.manufacturer.upper() == ISOTECH
+
+    @property
     def is_supported(self) -> bool:
         return self.manufacturer.upper().startswith(SUPPORTED_MANUFACTURERS)
 
@@ -97,10 +108,13 @@ def discover(
     scan_lan: bool = True,
     match: Callable[[DiscoveredInstrument], bool] = lambda inst: inst.is_supported,
     skip_serial_ports: Iterable[str] = (),
+    ips_ports: Mapping[str, str] | None = None,
 ) -> list[DiscoveredInstrument]:
     """Find instruments with VISA, with a LAN scan if VISA finds none, and on serial ports.
 
     skip_serial_ports: ports that are open already. A second open of a serial port fails.
+    ips_ports: RS-232 ports with an ISO-TECH IPS, as port -> model. Discovery sends data
+    only to these ports, because the user stated them.
     """
     found: dict[str, DiscoveredInstrument] = {}  # keyed by serial number to merge USB/LAN duplicates
     seen_hosts: set[str] = set()
@@ -123,6 +137,14 @@ def discover(
 
     for inst in discover_serial(skip_ports=skip_serial_ports):
         if match(inst):
+            found.setdefault(inst.serial, inst)
+
+    skip = {p.upper() for p in skip_serial_ports}
+    for device, model in (ips_ports or {}).items():
+        if device.upper() in skip:
+            continue
+        inst = identify_ips(device, model)
+        if inst is not None and match(inst):
             found.setdefault(inst.serial, inst)
 
     return list(found.values())
@@ -196,6 +218,33 @@ def identify_hcs(device: str, usb_serial: str | None = None) -> DiscoveredInstru
     return DiscoveredInstrument(
         address=device, backend="serial", manufacturer="MANSON",
         model=model, serial=usb_serial or device, firmware="",
+    )
+
+
+def identify_ips(device: str, model: str) -> DiscoveredInstrument | None:
+    """Send L to a serial port that the user stated. Return the instrument, or None if no IPS answers.
+
+    The protocol has no identification command and no serial number. Thus the model is
+    the stated model, and the port is the serial number.
+    """
+    model = model.upper()
+    if model not in IPS_MODELS:
+        log.debug("Unknown IPS model %r for %s", model, device)
+        return None
+    try:
+        transport = IPSSerialTransport.open(device, timeout=IPS_PROBE_TIMEOUT_S)
+    except OSError as exc:
+        log.debug("Cannot open %s: %s", device, exc)
+        return None
+    try:
+        parse_status_line(transport.query("L"))
+    except OSError as exc:  # includes TimeoutError and IPSProtocolError
+        log.debug("No IPS reply on %s: %s", device, exc)
+        return None
+    finally:
+        transport.close()
+    return DiscoveredInstrument(
+        address=device, backend="serial", manufacturer=ISOTECH, model=model, serial=device, firmware="",
     )
 
 

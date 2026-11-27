@@ -8,10 +8,11 @@ import pytest
 from lab_mcp import server
 from lab_mcp.discovery import DiscoveredInstrument
 from lab_mcp.instruments.multimeters import RigolDM3058
-from lab_mcp.instruments.power_supplies import MansonHCS, RigolDP
+from lab_mcp.instruments.power_supplies import IsoTechIPS, MansonHCS, RigolDP
 from lab_mcp.instruments.signal_generators import GWInstekAFG2000
 
 from fake_gwinstek_afg2000 import FakeAFGTransport
+from fake_isotech_ips import FakeIPSTransport
 from fake_manson_hcs import FakeHCSTransport
 from fake_rigol_dm3058 import FakeDM3058Resource
 from fake_rigol_dp import FakeRigolDPResource
@@ -21,7 +22,7 @@ from fake_rigol_dp import FakeRigolDPResource
 def instruments(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(server.discovery, "discover", lambda **kwargs: [])
     devices = SimpleNamespace(
-        dp=FakeRigolDPResource(), hcs=FakeHCSTransport(),
+        dp=FakeRigolDPResource(), hcs=FakeHCSTransport(), ips=FakeIPSTransport(),
         dmm=FakeDM3058Resource(), afg=FakeAFGTransport(),
     )
     for slot, device, info in (
@@ -32,6 +33,10 @@ def instruments(monkeypatch: pytest.MonkeyPatch):
         (server.hcs, MansonHCS(devices.hcs), DiscoveredInstrument(
             address="COM7", backend="serial", manufacturer="MANSON",
             model="HCS-3404", serial="HCS1", firmware="",
+        )),
+        (server.ips, IsoTechIPS(devices.ips, "IPS-405"), DiscoveredInstrument(
+            address="/dev/ttyS0", backend="serial", manufacturer="ISO-TECH",
+            model="IPS-405", serial="/dev/ttyS0", firmware="",
         )),
         (server.dm3058, RigolDM3058(devices.dmm), DiscoveredInstrument(
             address="USB0::0x1AB1::0x09C4::DMM1::INSTR", backend="@py",
@@ -45,7 +50,7 @@ def instruments(monkeypatch: pytest.MonkeyPatch):
         slot.set(device, info)
     for state in devices.dp.state.values():
         state["OUT"] = True
-    devices.hcs.output = devices.afg.output = True
+    devices.hcs.output = devices.ips.output = devices.afg.output = True
     yield devices
     for slot in server.SLOTS:
         slot.close()
@@ -60,10 +65,12 @@ def test_all_outputs_off_switches_sources_and_leaves_multimeter_unchanged(instru
     assert {r["instrument"]: (r["serial"], r["result"]) for r in results} == {
         "Rigol DP": ("DP1", "off"),
         "Manson HCS": ("HCS1", "off"),
+        "ISO-TECH IPS": ("/dev/ttyS0", "off"),
         "GW Instek AFG": ("AFG1", "off"),
     }
     assert not any(state["OUT"] for state in instruments.dp.state.values())
     assert instruments.hcs.output is False
+    assert instruments.ips.output is False
     assert instruments.afg.output is False
     assert instruments.dmm.writes == []
 
@@ -84,7 +91,7 @@ def test_all_outputs_off_continues_after_failure(instruments, monkeypatch, error
 
     results = {r["instrument"]: r["result"] for r in call("all_outputs_off").structured_content["result"]}
     assert results["Rigol DP"].startswith(reason)
-    assert results["Manson HCS"] == results["GW Instek AFG"] == "off"
+    assert results["Manson HCS"] == results["ISO-TECH IPS"] == results["GW Instek AFG"] == "off"
     assert instruments.hcs.output is False
     assert instruments.afg.output is False
     if isinstance(error, OSError):
@@ -101,10 +108,10 @@ def test_discovery_merges_connected_devices_and_skips_open_serial_ports(instrume
 
     monkeypatch.setattr(server.discovery, "discover", discover)
     results = call("discover_instruments", scan_lan=False).structured_content["result"]
-    assert sorted(i["serial"] for i in results) == ["AFG1", "DMM1", "DP1", "DP2", "HCS1"]
+    assert sorted(i["serial"] for i in results) == ["/dev/ttyS0", "AFG1", "DMM1", "DP1", "DP2", "HCS1"]
     assert len(calls) == 1
     assert calls[0]["scan_lan"] is False
-    assert set(calls[0]["skip_serial_ports"]) == {"COM7", "COM8"}
+    assert set(calls[0]["skip_serial_ports"]) == {"COM7", "COM8", "/dev/ttyS0"}
 
 
 @pytest.mark.parametrize(
