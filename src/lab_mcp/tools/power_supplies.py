@@ -1,16 +1,17 @@
-"""MCP tools for DC power supplies: Rigol DP800/DP900 (dp_*) and Manson HCS (hcs_*)."""
+"""MCP tools for DC power supplies: Rigol DP800/DP900 (dp_*), Manson HCS (hcs_*) and ISO-TECH IPS (ips_*)."""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp_types import ToolAnnotations
 from pydantic import Field
 
 from lab_mcp.discovery import DiscoveredInstrument
+from lab_mcp.instruments.power_supplies.isotech_ips import IPSMeasurement, IPSStatus
 from lab_mcp.instruments.power_supplies.manson_hcs import HCSMeasurement, HCSPreset, HCSStatus
 from lab_mcp.instruments.power_supplies.rigol_dp import ChannelStatus, Measurement, RigolDP
-from lab_mcp.server import READ_ONLY, _guard, hcs, mcp, rigol_dp
+from lab_mcp.server import READ_ONLY, _guard, hcs, ips, ips_ports, mcp, rigol_dp
 
 # No fixed maximum: the limits depend on the model and the channel (see dp_status).
 # The driver checks them, for example DP832 CH3 max. 5 V, DP932A CH1 max. 32 V.
@@ -27,6 +28,13 @@ VisaAddress = Annotated[
 HcsVolts = Annotated[float, Field(ge=0, description="Voltage in V (limit of the model: see hcs_status)")]
 HcsAmps = Annotated[float, Field(ge=0, description="Current in A (limit of the model: see hcs_status)")]
 SerialPort = Annotated[str, Field(min_length=1, description="Serial port, for example COM7 or /dev/ttyUSB0")]
+# The limits of each IPS model are in the driver (see ips_status). The driver checks them.
+IpsModel = Literal["IPS-405", "IPS-603", "IPS-2010"]
+IpsVolts = Annotated[float, Field(ge=0, description="Voltage setpoint in V, steps of 0.01 V (see ips_status)")]
+IpsAmps = Annotated[float, Field(ge=0, description="Current limit in A, steps of 0.01 A (see ips_status)")]
+IpsVoltageLimit = Annotated[int, Field(ge=0, description="Voltage limit in V, steps of 1 V (see ips_status)")]
+IpsPowerLimit = Annotated[int, Field(ge=0, description="Power limit in W, steps of 1 W (see ips_status)")]
+RsPort = Annotated[str, Field(min_length=1, description="RS-232 port, for example /dev/ttyS0 or COM1")]
 
 
 def _channels(dev: RigolDP, channel: int | None) -> list[int]:
@@ -232,4 +240,118 @@ def hcs_load_preset(index: Annotated[int, Field(ge=0, le=2, description="Preset 
     with _guard(hcs):
         dev = hcs.device()
         dev.load_preset(index)
+        return dev.status()
+
+
+# -- ISO-TECH IPS --------------------------------------------------------
+
+
+@mcp.tool()
+def ips_connect(port: RsPort | None = None, model: IpsModel | None = None) -> DiscoveredInstrument:
+    """Connect to an ISO-TECH IPS power supply on an RS-232 port.
+
+    The server cannot find an IPS automatically: the port has no USB ID, and the protocol has no
+    identification command. Thus state the port and the model. The server then uses this port again
+    after a communication error, and for discover_instruments and all_outputs_off.
+    Without arguments, the server uses the port that the server options or the last ips_connect set.
+    """
+    with _guard(ips):
+        if port is None:
+            if model is not None:
+                raise ValueError("State the port together with the model.")
+            return ips.connect()
+        if model is None:
+            raise ValueError("State the model together with the port. The instrument cannot report its model.")
+        previous = dict(ips_ports)
+        if ips.connected_info is not None and ips.connected_info.address == port:
+            ips.close()  # the port must be free for the probe
+        ips_ports.clear()
+        ips_ports[port] = model
+        try:
+            return ips.connect(address=port)
+        except Exception:
+            ips_ports.clear()
+            ips_ports.update(previous)
+            raise
+
+
+@mcp.tool(annotations=READ_ONLY)
+def ips_identify() -> DiscoveredInstrument:
+    """Show the connected ISO-TECH IPS: port and model. The IPS has no serial number; the port is the serial."""
+    with _guard(ips):
+        return ips.info()
+
+
+@mcp.tool(annotations=READ_ONLY)
+def ips_status() -> IPSStatus:
+    """Read the output state, the remote mode, the limits and the limits of the model.
+
+    While the output is on, the instrument cannot report the voltage setpoint.
+    Then voltage_setpoint is the last value that the server set.
+    """
+    with _guard(ips):
+        return ips.device().status()
+
+
+@mcp.tool(annotations=READ_ONLY)
+def ips_measure() -> IPSMeasurement:
+    """Measure the output voltage (V), current (A) and power (W), and derive the CV/CC mode.
+
+    While the output is off, the instrument reports the voltage setpoint, not 0 V.
+    The protocol does not report the mode. The server derives it from the current limit and the voltage setpoint.
+    After you change a setpoint or the output, wait 1 s before you measure.
+    """
+    with _guard(ips):
+        return ips.device().measure()
+
+
+@mcp.tool()
+def ips_set(voltage: IpsVolts | None = None, current: IpsAmps | None = None) -> IPSStatus:
+    """Set the voltage (V), the current limit (A) or both. The output state does not change.
+
+    The voltage must not be above the voltage limit (see ips_status).
+    The instrument keeps P = U x I: a new current limit also changes the power limit.
+    """
+    with _guard(ips):
+        dev = ips.device()
+        if current is not None:
+            dev.set_current_limit(current)
+        if voltage is not None:
+            dev.set_voltage(voltage)
+        return dev.status()
+
+
+@mcp.tool()
+def ips_set_limits(voltage: IpsVoltageLimit | None = None, power: IpsPowerLimit | None = None) -> IPSStatus:
+    """Set the voltage limit (V), the power limit (W) or both. The instrument accepts only whole numbers.
+
+    The voltage limit is the highest voltage setpoint that the instrument accepts.
+    The instrument keeps P = U x I. A new voltage limit changes the power limit.
+    CAUTION: a new power limit sets the current limit to P / U. This can increase the current limit.
+    Read current_limit in the result.
+    """
+    with _guard(ips):
+        dev = ips.device()
+        if voltage is not None:
+            dev.set_voltage_limit(voltage)
+        if power is not None:
+            dev.set_power_limit(power)
+        return dev.status()
+
+
+@mcp.tool(annotations=ToolAnnotations(destructive_hint=True))
+def ips_output(enabled: bool) -> IPSStatus:
+    """Switch the output on or off. The server reads the output state again after the command."""
+    with _guard(ips):
+        dev = ips.device()
+        dev.set_output(enabled)
+        return dev.status()
+
+
+@mcp.tool()
+def ips_store() -> IPSStatus:
+    """Save the present settings to the EEPROM of the instrument. The instrument uses them after power-on."""
+    with _guard(ips):
+        dev = ips.device()
+        dev.store()
         return dev.status()

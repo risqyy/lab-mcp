@@ -24,7 +24,15 @@ from lab_mcp import discovery
 from lab_mcp.discovery import DiscoveredInstrument
 from lab_mcp.instruments.multimeters import DM3058_MODELS, RigolDM3058
 from lab_mcp.instruments.oscilloscopes import DS4000_MODELS, SDS_MODELS, RigolDS4000, SiglentSDS1000XE
-from lab_mcp.instruments.power_supplies import RIGOL_DP_MODELS, MansonHCS, RigolDP, SerialTransport
+from lab_mcp.instruments.power_supplies import (
+    IPS_MODELS,
+    RIGOL_DP_MODELS,
+    IPSSerialTransport,
+    IsoTechIPS,
+    MansonHCS,
+    RigolDP,
+    SerialTransport,
+)
 from lab_mcp.instruments.signal_generators import AFG_MODELS, AFGSerialTransport, GWInstekAFG2000
 from lab_mcp.instruments.spectrum_analyzers import DSA800_MODELS, RigolDSA800
 
@@ -49,6 +57,8 @@ mcp = MCPServer(
         "Read the limits of each channel with dp_status. "
         "Manson HCS series: DC power supply with one output, tools hcs_*. "
         "Read the limits of the HCS model with hcs_status. "
+        "ISO-TECH IPS series (IPS-405, IPS-603, IPS-2010): DC power supply with one output on RS-232, tools ips_*. "
+        "The server cannot find an IPS automatically. Use ips_connect with the port and the model. "
         "Rigol DM3058 and DM3058E: digital multimeter, tools dmm_*. "
         "GW Instek AFG-2105: signal generator, tools sig_*. "
         "Read sig_status for the load setting and voltage limits before setting or enabling a signal. "
@@ -80,6 +90,11 @@ HCS_HINT = (
     "Make sure that Windows shows a COM port for the instrument (Silicon Labs CP210x driver). "
     "Close other programs that use the port."
 )
+IPS_HINT = (
+    "The server does not send data to RS-232 ports without a configuration. "
+    "Use ips_connect with the port and the model, or start the server with --ips-port and --ips-model. "
+    "Use a straight RS-232 cable (not a null modem cable). Close other programs that use the port."
+)
 AFG_HINT = (
     "Connect the USB cable. Make sure that the operating system shows a serial port for the "
     "GW Instek AFG (USB CDC, not USB-TMC). Close other programs that use the port."
@@ -106,6 +121,10 @@ def _is_dm3058(inst: DiscoveredInstrument) -> bool:
 
 def _is_hcs(inst: DiscoveredInstrument) -> bool:
     return inst.is_manson and inst.model.upper().startswith("HCS")
+
+
+def _is_ips(inst: DiscoveredInstrument) -> bool:
+    return inst.is_isotech and inst.model.upper() in IPS_MODELS
 
 
 def _is_afg(inst: DiscoveredInstrument) -> bool:
@@ -156,7 +175,9 @@ class _Slot(Generic[T]):
                 raise RuntimeError(f"No instrument answers at {address}.")
         else:
             found = sorted(
-                discovery.discover(match=self._match, skip_serial_ports=_open_serial_ports()),
+                discovery.discover(
+                    match=self._match, skip_serial_ports=_open_serial_ports(), ips_ports=dict(ips_ports)
+                ),
                 key=lambda i: i.serial,
             )
             if serial is not None:
@@ -295,6 +316,21 @@ def _open_hcs(info: DiscoveredInstrument) -> tuple[MansonHCS, Callable[[], None]
     return dev, dev.close
 
 
+def _open_ips(info: DiscoveredInstrument) -> tuple[IsoTechIPS, Callable[[], None]]:
+    transport = IPSSerialTransport.open(info.address)
+    try:
+        dev = IsoTechIPS(transport, info.model)
+    except Exception:
+        transport.close()
+        raise
+    return dev, dev.close
+
+
+def _identify_ips_address(address: str) -> DiscoveredInstrument | None:
+    model = ips_ports.get(address)
+    return None if model is None else discovery.identify_ips(address, model)
+
+
 def _open_afg(info: DiscoveredInstrument) -> tuple[GWInstekAFG2000, Callable[[], None]]:
     transport = AFGSerialTransport.open(info.address)
     try:
@@ -306,10 +342,15 @@ def _open_afg(info: DiscoveredInstrument) -> tuple[GWInstekAFG2000, Callable[[],
 
 
 lock = threading.RLock()
+# RS-232 ports with an ISO-TECH IPS, as port -> model. The IPS has no USB ID and no
+# identification command. Thus the server uses only the ports that the user states
+# (ips_connect, or --ips-port and --ips-model).
+ips_ports: dict[str, str] = {}
 rigol_dp = _Slot[RigolDP](
     "Rigol DP", _is_rigol_dp, _open_rigol_dp, _identify_visa_address, RIGOL_DP_HINT, _visa_is_open
 )
 hcs = _Slot[MansonHCS]("Manson HCS", _is_hcs, _open_hcs, discovery.identify_hcs, HCS_HINT)
+ips = _Slot[IsoTechIPS]("ISO-TECH IPS", _is_ips, _open_ips, _identify_ips_address, IPS_HINT)
 dm3058 = _Slot[RigolDM3058](
     "Rigol DM3058", _is_dm3058, _open_dm3058, _identify_visa_address, DMM_HINT, _visa_is_open
 )
@@ -323,7 +364,7 @@ scope = _Slot[SiglentSDS1000XE | RigolDS4000](
 spectrum_analyzer = _Slot[RigolDSA800](
     "spectrum analyzer", _is_spectrum_analyzer, _open_spectrum_analyzer, _identify_visa_address, SA_HINT, _visa_is_open
 )
-SLOTS: list[_Slot] = [rigol_dp, hcs, dm3058, afg, scope, spectrum_analyzer]
+SLOTS: list[_Slot] = [rigol_dp, hcs, ips, dm3058, afg, scope, spectrum_analyzer]
 
 
 def _open_serial_ports() -> list[str]:
@@ -363,12 +404,15 @@ class OutputOffResult(BaseModel):
 def discover_instruments(scan_lan: bool = True) -> list[DiscoveredInstrument]:
     """Find all supported instruments on USB, on the LAN and on serial ports.
 
+    An ISO-TECH IPS is found only on the port that ips_connect or the server options set.
     If scan_lan is true and no instrument answers the VISA search, the server scans the local networks.
     The list includes the instruments that are connected now.
     """
     with _guard():
         connected = [s.connected_info for s in SLOTS if s.connected_info is not None]
-        found = discovery.discover(scan_lan=scan_lan, skip_serial_ports=_open_serial_ports())
+        found = discovery.discover(
+            scan_lan=scan_lan, skip_serial_ports=_open_serial_ports(), ips_ports=dict(ips_ports)
+        )
         known = {i.serial for i in connected}
         return connected + [i for i in found if i.serial not in known]
 
@@ -381,6 +425,7 @@ def all_outputs_off() -> list[OutputOffResult]:
         for slot, switch_off in (
             (rigol_dp, lambda d: d.all_outputs_off()),
             (hcs, lambda d: d.set_output(False)),
+            (ips, lambda d: d.set_output(False)),
             (afg, lambda d: d.set_output(False)),
         ):
             connected = False
@@ -409,7 +454,19 @@ def main(argv: list[str] | None = None) -> None:
         help=f"HTTP address (default: {DEFAULT_HOST}). Use 0.0.0.0 for access from the network.",
     )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"HTTP port (default: {DEFAULT_PORT})")
+    parser.add_argument(
+        "--ips-port", metavar="PORT",
+        help="RS-232 port of an ISO-TECH IPS power supply, for example /dev/ttyS0 or COM1",
+    )
+    parser.add_argument(
+        "--ips-model", type=str.upper, choices=list(IPS_MODELS),
+        help="Model of the ISO-TECH IPS power supply at --ips-port",
+    )
     args = parser.parse_args(argv)
+    if (args.ips_port is None) != (args.ips_model is None):
+        parser.error("use --ips-port and --ips-model together")
+    if args.ips_port is not None:
+        ips_ports[args.ips_port] = args.ips_model
 
     if args.transport == "stdio":
         mcp.run()

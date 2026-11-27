@@ -7,7 +7,7 @@ from lab_mcp.discovery import DiscoveredInstrument
 
 
 def inst(address: str, serial: str, model: str = "DP832", manufacturer: str = "RIGOL TECHNOLOGIES"):
-    backend = "serial" if manufacturer == "MANSON" else "@py"
+    backend = "serial" if manufacturer in ("MANSON", "ISO-TECH") else "@py"
     return DiscoveredInstrument(
         address=address, backend=backend, manufacturer=manufacturer, model=model, serial=serial, firmware=""
     )
@@ -166,3 +166,66 @@ def test_identify_afg_port_cannot_open(monkeypatch):
 
     monkeypatch.setattr(discovery.AFGSerialTransport, "open", classmethod(fail))
     assert discovery.identify_afg("COM8") is None
+
+
+@pytest.mark.parametrize("reply,found", [
+    ("V20.00A2.500W050.0U40I5.00P200F101000", True),
+    ("HCS-3404", False),
+    (TimeoutError("no reply"), False),
+])
+def test_identify_ips_closes_probe(monkeypatch, reply, found):
+    class Probe:
+        closed = False
+
+        def query(self, command):
+            assert command == "L"
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        def close(self):
+            self.closed = True
+
+    probe = Probe()
+    monkeypatch.setattr(discovery.IPSSerialTransport, "open", classmethod(lambda cls, device, timeout: probe))
+    info = discovery.identify_ips("/dev/ttyS0", "ips-405")
+    assert probe.closed
+    assert (info is not None) == found
+    if info:
+        assert (info.manufacturer, info.model, info.serial, info.backend) == (
+            "ISO-TECH", "IPS-405", "/dev/ttyS0", "serial",
+        )
+        assert info.is_isotech and info.is_supported
+
+
+def test_identify_ips_unknown_model_sends_nothing(monkeypatch):
+    def fail(cls, device, timeout):
+        raise AssertionError("port must not be opened")
+
+    monkeypatch.setattr(discovery.IPSSerialTransport, "open", classmethod(fail))
+    assert discovery.identify_ips("/dev/ttyS0", "IPS-303") is None
+
+
+def test_identify_ips_port_cannot_open(monkeypatch):
+    def fail(cls, device, timeout):
+        raise OSError("access denied")
+
+    monkeypatch.setattr(discovery.IPSSerialTransport, "open", classmethod(fail))
+    assert discovery.identify_ips("/dev/ttyS0", "IPS-405") is None
+
+
+def test_discover_probes_only_configured_ips_ports(fake_phases, monkeypatch):
+    probed = []
+
+    def identify(device, model):
+        probed.append((device, model))
+        return inst(device, device, model=model, manufacturer="ISO-TECH")
+
+    monkeypatch.setattr(discovery, "identify_ips", identify)
+    assert discovery.discover() == []
+    assert probed == []
+    found = discovery.discover(
+        ips_ports={"/dev/ttyS0": "IPS-405", "/dev/ttyS1": "IPS-603"}, skip_serial_ports=["/dev/ttys1"]
+    )
+    assert probed == [("/dev/ttyS0", "IPS-405")]
+    assert [(i.address, i.model) for i in found] == [("/dev/ttyS0", "IPS-405")]
