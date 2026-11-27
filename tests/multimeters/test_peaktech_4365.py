@@ -35,6 +35,18 @@ def test_dc_millivolt_with_history() -> None:
     assert r.history == [0.09757, None, 0.0]  # the history uses the unit of line 1 (mV)
 
 
+def test_lowest_resistance_range_in_ohm() -> None:
+    r = read("resistance_ohm_overload")
+    assert (r.function, r.unit, r.overload, r.display, r.history) == ("resistance", "Ohm", True, "O.L Ohm", [None, 0.0, 0.0])
+
+
+def test_signal_output_with_overload_of_amplitude() -> None:
+    r = read("signal_output_overload")
+    assert (r.function, r.value) == ("signal_output", 10.0)
+    amplitude = r.secondary["amplitude"]
+    assert (amplitude.value, amplitude.unit, amplitude.overload) == (None, "V", True)
+
+
 def test_negative_value() -> None:
     r = read("dc_v_negative")
     assert (r.value, r.display) == (-12.5, "-0012.5 V")

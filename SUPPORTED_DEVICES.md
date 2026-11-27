@@ -53,8 +53,9 @@ Measurements with components, current, and AC signals are not verified on the re
 
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
-The PeakTech 4365 support agrees with recorded replies of a real PeakTech 4365 for all positions of the rotary switch,
-except the lowest resistance range. The values are not compared with a reference instrument.
+The PeakTech 4365 support agrees with recorded replies of a real PeakTech 4365 for all positions and ranges of the rotary switch.
+The test used open inputs. Thus most resistance and capacitance replies were overloads.
+The values are not compared with a reference instrument.
 
 The ISO-TECH IPS support agrees with the IPS series user manual and with an existing command-line tool for these instruments.
 The IPS-405 is tested on RS-232: all tools without a load, constant-current operation with a 0.1 Ω shunt (0.5 A to 2 A),

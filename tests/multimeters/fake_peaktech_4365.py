@@ -13,6 +13,8 @@ REPLIES: dict[str, bytes] = {
     "diode_open": b"DI   OL.   mV\r             \r     Open    \r             \r",
     "diode_bad": b"DI 0000.1  mV\r             \r     bAd     \r             \r",
     "resistance_overload": b"OH  .OL  kOhm\r    .OL      \r   0.0000    \r   0.0000    \r",
+    "resistance_ohm_overload": b"OH   O.L  Ohm\r     O.L     \r   000.00    \r   000.00    \r",
+    "signal_output_overload": b"FR 00.010 kHz\r             \r     .OL    V\r             \r",
     "dc_mv": b"DC 009.16  mV\r   097.57    \r     O.L     \r   000.00    \r",
     "dc_v_negative": b"DC-0012.5   V\r   0012.4    \r   0012.4    \r   0012.3    \r",
     "ac_v": b"AC 007.30   V\r             \rFR 00.147 kHz\rdB-008.53 dBm\r",
