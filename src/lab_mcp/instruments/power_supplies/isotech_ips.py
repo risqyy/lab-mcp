@@ -21,10 +21,13 @@ Behavior of a real IPS-405 (no load):
   or the voltage limit changes the power limit. "SP" sets the current limit to P / U.
   Thus a change of the power limit can increase the current limit.
 - The instrument decreases a voltage setpoint above the voltage limit to the voltage limit.
+- Each command on RS-232 switches remote mode on. The REM key switches it off, but the
+  next command switches it on again. Thus set commands operate also after the REM key.
+- In constant-current operation, the reply contains the output voltage and the output
+  current (test with a 0.1 Ohm shunt, 0.5 A to 2 A).
 
-The user manual states that the instrument accepts set commands only in remote mode
-(REM key on the front panel). The driver reads the limits and the output state again
-after each change. If the instrument did not accept the change, the driver raises an error.
+The driver reads the instrument again after each change. If the instrument did not
+accept the change, the driver raises an error.
 """
 
 from __future__ import annotations
@@ -145,7 +148,7 @@ class IPSReading(_Model):
 class IPSStatus(_Model):
     model: str
     output_enabled: bool = Field(description="State of the output relay")
-    remote: bool = Field(description="Remote mode (REM key). The user manual states that set commands need it.")
+    remote: bool = Field(description="Remote mode. Each command on RS-232 switches it on.")
     front_panel_locked: bool = Field(description="LOCK key is on")
     overheat: bool
     voltage_setpoint: NonNegativeFloat | None = Field(
@@ -280,8 +283,10 @@ class IsoTechIPS:
     def _expect(self, command: str, accepted) -> None:
         reading = self.read()
         if not accepted(reading):
-            hint = "" if reading.remote else " The instrument is not in remote mode. Push the REM key on the front panel."
-            raise RuntimeError(f"The instrument did not accept {command}.{hint}")
+            raise RuntimeError(
+                f"The instrument did not accept {command}. Make sure that no limit is in the setting mode "
+                "on the front panel, and that the stated model is correct. Then read ips_status."
+            )
 
 
 def _check_range(name: str, value: float, maximum: float, unit: str) -> None:

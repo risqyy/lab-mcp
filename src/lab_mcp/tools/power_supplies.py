@@ -308,7 +308,7 @@ def ips_measure() -> IPSMeasurement:
 def ips_set(voltage: IpsVolts | None = None, current: IpsAmps | None = None) -> IPSStatus:
     """Set the voltage (V), the current limit (A) or both. The output state does not change.
 
-    The voltage must not be above the voltage limit (see ips_status). The instrument needs remote mode.
+    The voltage must not be above the voltage limit (see ips_status).
     The instrument keeps P = U x I: a new current limit also changes the power limit.
     """
     with _guard(ips):

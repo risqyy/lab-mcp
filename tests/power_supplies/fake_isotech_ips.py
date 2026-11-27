@@ -20,6 +20,7 @@ class FakeIPSTransport:
         self.power_limit = int(voltage_limit * current_limit)
         self.output = False
         self.remote = True
+        self.ignore_sets = False  # simulates an instrument that does not accept a set command
         self.locked = False
         self.overheat = False
         self.load_ohms = 10.0
@@ -34,6 +35,7 @@ class FakeIPSTransport:
 
     def query(self, command: str) -> str:
         self.commands.append(command)
+        self.remote = True
         v, a = self._output_values()
         if command == "L":
             flags = "".join(
@@ -47,8 +49,9 @@ class FakeIPSTransport:
 
     def write(self, command: str) -> None:
         self.commands.append(command)
-        if not self.remote:
-            return  # like the user manual: no set commands without remote mode
+        self.remote = True  # like the real IPS-405: each command switches remote mode on
+        if self.ignore_sets:
+            return
         if command in ("KOE", "KOD"):
             self.output = command == "KOE"
         elif command == "EEP":

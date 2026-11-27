@@ -69,8 +69,8 @@ def test_voltage_setpoint_is_unknown_while_output_is_on_before_first_set(t: Fake
 
 
 def test_voltage_setpoint_is_examined_while_output_is_off(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
-    t.remote = False
-    with pytest.raises(RuntimeError, match="did not accept SV 03.30.*REM key"):
+    t.ignore_sets = True
+    with pytest.raises(RuntimeError, match="did not accept SV 03.30"):
         dev.set_voltage(3.3)
 
 
@@ -143,9 +143,9 @@ def test_output_is_read_back(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
     assert t.commands[-2:] == ["KOD", "L"] and t.output is False
 
 
-def test_change_without_remote_mode_raises(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
-    t.remote = False
-    with pytest.raises(RuntimeError, match="did not accept KOE.*REM key"):
+def test_change_that_is_not_accepted_raises(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    t.ignore_sets = True
+    with pytest.raises(RuntimeError, match="did not accept KOE.*setting mode"):
         dev.set_output(True)
     with pytest.raises(RuntimeError, match="did not accept SI 1.00"):
         dev.set_current_limit(1.0)
@@ -157,6 +157,12 @@ def test_measure_with_load(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
     dev.set_output(True)
     m = dev.measure()
     assert (m.voltage, m.current, m.power) == (5.0, 0.5, 2.5)  # current limit active
+
+
+def test_command_switches_remote_mode_on(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    t.remote = False  # REM key on the front panel
+    dev.set_current_limit(1.0)
+    assert dev.status().remote is True
 
 
 def test_store(dev: IsoTechIPS, t: FakeIPSTransport) -> None:

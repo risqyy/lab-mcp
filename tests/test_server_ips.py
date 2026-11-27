@@ -72,9 +72,9 @@ def test_ips_schema_rejects_fraction_for_limits(fake_ips: FakeIPSTransport) -> N
     assert not [c for c in fake_ips.commands if c.startswith("SU")]
 
 
-def test_ips_without_remote_mode_reports_hint(fake_ips: FakeIPSTransport) -> None:
-    fake_ips.remote = False
-    with pytest.raises(ToolError, match="REM key"):
+def test_ips_change_that_is_not_accepted_reports_error(fake_ips: FakeIPSTransport) -> None:
+    fake_ips.ignore_sets = True
+    with pytest.raises(ToolError, match="did not accept KOE"):
         call("ips_output", enabled=True)
 
 
