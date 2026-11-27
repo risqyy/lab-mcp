@@ -28,7 +28,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | Rigol DP932U | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Rigol DP932E | DC power supply with three outputs | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
 | Manson HCS-3404 | DC power supply with one output | USB virtual COM port  | Yes       | Yes (USB, no load)                      |
-| ISO-TECH IPS-405 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No (simulated instrument only)    |
+| ISO-TECH IPS-405 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | Yes (RS-232, no load)             |
 | ISO-TECH IPS-603 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No                                |
 | ISO-TECH IPS-2010 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No                               |
 | Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
@@ -52,7 +52,9 @@ Measurements with components, current, and AC signals are not verified on the re
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
 The ISO-TECH IPS support agrees with the IPS series user manual and with an existing command-line tool for these instruments.
-It is not tested on a real instrument.
+The IPS-405 is tested on RS-232 without a load: all tools, the limits, the output and `all_outputs_off`.
+Operation with a load, operation without remote mode, and `ips_store` are not tested on the real instrument.
+The IPS-603 and the IPS-2010 use the same protocol. They are not tested.
 
 The SDS1104X-E and the DS4014 use the same `scope_*` tools. The DS4014 has no math and cursor tools.
 
@@ -297,21 +299,34 @@ The server refuses a voltage setpoint above the voltage limit (U) of the instrum
 The voltage limit and the power limit accept only whole numbers (steps of 1 V and 1 W).
 The voltage setpoint and the current limit use steps of 0.01.
 
-**CAUTION:** The IPS protocol cannot read the voltage setpoint.
-The server shows the last voltage setpoint that it set. Before the first set command, the setpoint is unknown.
+**CAUTION:** The instrument keeps P = U × I (P rounded down to 1 W). A new power limit sets the current limit to P / U.
+Thus a new power limit can increase the current limit. Read `current_limit` in the result of `ips_set_limits`.
+The server refuses a power limit that gives a current limit above the maximum current of the model.
 
-After each change of the output, the current limit, the voltage limit or the power limit, the server reads the instrument again.
-If the instrument did not accept the change, the tool sends an error. The server cannot examine a change of the voltage setpoint.
+While the output is on, the instrument cannot report the voltage setpoint.
+Then the server shows the last voltage setpoint that it set. If the server did not set it, the setpoint is unknown.
+
+After each change, the server reads the instrument again. If the instrument did not accept the change, the tool sends an error.
+While the output is on, the server cannot examine a change of the voltage setpoint.
 
 ### Instrument behavior
 
-These items are from the IPS user manual and from the existing command-line tool. They are not tested on a real instrument.
+These items were found in a test with an IPS-405 without a load:
 
 | Item                                | Behavior                                                         |
 |-------------------------------------|------------------------------------------------------------------|
-| Set command                         | The instrument sends no reply. The server waits 0.5 s after each set command. |
+| Reply                               | The reply line ends with CR CR LF. The reply to `L` takes 0.55 s to 0.8 s. |
+| Set command                         | The instrument sends no reply. The server waits 0.5 s after each set command. A wait of 0.5 s is sufficient. |
+| Voltage with the output off         | The instrument reports the voltage setpoint, not 0 V. `ips_measure` shows `output_enabled`. |
+| Current limit or voltage limit      | The instrument changes the power limit to U × I, rounded down to 1 W. |
+| Power limit                         | The instrument sets the current limit to P / U. The current limit can increase. |
+| Voltage setpoint above the voltage limit | The instrument decreases the setpoint to the voltage limit. The server refuses the setpoint before it sends it. |
+
+These items are from the IPS user manual. They are not tested on a real instrument:
+
+| Item                                | Behavior                                                         |
+|-------------------------------------|------------------------------------------------------------------|
 | Remote mode                         | Set commands operate only in remote mode (REM key). In remote mode, the front panel controls are locked. |
-| Power limit                         | A change of the power limit can also change the current limit.   |
 | Lower-case U, I or P in the status  | The limit is in the setting mode on the front panel.            |
 
 ### Troubleshooting

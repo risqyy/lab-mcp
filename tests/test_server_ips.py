@@ -44,7 +44,7 @@ def test_ips_set_output_measure(fake_ips: FakeIPSTransport) -> None:
     assert (st["voltage_setpoint"], st["current_limit"], st["output_enabled"]) == (12.0, 2.0, False)
     assert call("ips_output", enabled=True).structured_content["output_enabled"] is True
     m = call("ips_measure").structured_content
-    assert (m["voltage"], m["current"], m["power"]) == (12.0, 1.2, 14.4)
+    assert (m["voltage"], m["current"], m["power"], m["output_enabled"]) == (12.0, 1.2, 14.4, True)
     assert call("ips_output", enabled=False).structured_content["output_enabled"] is False
     assert fake_ips.output is False
 
@@ -58,8 +58,10 @@ def test_ips_limit_of_model_reaches_model(fake_ips: FakeIPSTransport) -> None:
 
 
 def test_ips_set_limits(fake_ips: FakeIPSTransport) -> None:
-    st = call("ips_set_limits", voltage=15, power=100).structured_content
-    assert (st["voltage_limit"], st["power_limit"]) == (15, 100)
+    st = call("ips_set_limits", voltage=15, power=60).structured_content
+    assert (st["voltage_limit"], st["power_limit"], st["current_limit"]) == (15, 60, 4.0)
+    with pytest.raises(ToolError, match="above 5 A"):
+        call("ips_set_limits", power=100)
     with pytest.raises(ToolError, match="above the voltage limit 15 V"):
         call("ips_set", voltage=20.0)
 

@@ -10,8 +10,17 @@ computer). Thus the driver sets DTR. Do not send the asterisk that the user manu
 shows in front of each command.
 
 The protocol has no identification command and no serial number. Thus the user must
-state the model. The protocol cannot read the voltage setpoint. The driver remembers
-the last voltage setpoint that it set.
+state the model.
+
+Behavior of a real IPS-405 (no load):
+
+- The reply line ends with CR CR LF. The reply to "L" takes up to 0.8 s.
+- The voltage in the reply is the voltage setpoint while the output is off. Thus the
+  driver can examine a new voltage setpoint only while the output is off.
+- The instrument keeps P = U x I (P rounded down to 1 W). A change of the current limit
+  or the voltage limit changes the power limit. "SP" sets the current limit to P / U.
+  Thus a change of the power limit can increase the current limit.
+- The instrument decreases a voltage setpoint above the voltage limit to the voltage limit.
 
 The user manual states that the instrument accepts set commands only in remote mode
 (REM key on the front panel). The driver reads the limits and the output state again
@@ -28,7 +37,8 @@ import serial
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, PositiveFloat
 
 BAUD_RATE = 2400
-TIMEOUT_S = 1.0
+# A real IPS-405 sends the reply to "L" after up to 0.8 s.
+TIMEOUT_S = 2.0
 # The instrument needs time to apply a set command (value from the isotech CLI).
 SET_DELAY_S = 0.5
 
@@ -109,9 +119,10 @@ MODELS: dict[str, IPSLimits] = {
 
 
 class IPSMeasurement(_Model):
-    voltage: float = Field(description="Output voltage in V")
+    voltage: float = Field(description="Output voltage in V. While the output is off: the voltage setpoint.")
     current: float = Field(description="Output current in A")
     power: float = Field(description="Output power in W")
+    output_enabled: bool = Field(description="State of the output relay")
 
 
 class IPSReading(_Model):
@@ -138,11 +149,12 @@ class IPSStatus(_Model):
     front_panel_locked: bool = Field(description="LOCK key is on")
     overheat: bool
     voltage_setpoint: NonNegativeFloat | None = Field(
-        description="Last voltage setpoint that the server set. None: unknown, because the protocol cannot read it."
+        description="Voltage setpoint in V. While the output is on, the last value that the server set "
+        "(None: unknown), because the instrument then reports the output voltage."
     )
     voltage_limit: NonNegativeFloat = Field(description="Voltage limit (U) in V. The voltage setpoint must not be higher.")
     current_limit: NonNegativeFloat = Field(description="Current limit (I) in A")
-    power_limit: NonNegativeFloat = Field(description="Power limit (P) in W")
+    power_limit: NonNegativeFloat = Field(description="Power limit (P) in W. The instrument keeps P = U x I.")
     limits: IPSLimits
 
 
@@ -191,9 +203,13 @@ class IsoTechIPS:
                 f"voltage {volts} V is above the voltage limit {reading.voltage_limit:g} V. "
                 "Increase the voltage limit with ips_set_limits first."
             )
-        # The protocol cannot read the setpoint. Thus the driver cannot examine the result.
-        self._t.write(f"SV {volts:05.2f}")
+        command = f"SV {volts:05.2f}"
+        self._t.write(command)
         self._voltage_setpoint = round(volts, 2)
+        # While the output is off, the instrument reports the setpoint. While the output
+        # is on, it reports the output voltage, which depends on the load.
+        if not reading.output_enabled:
+            self._expect(command, lambda r: r.output_enabled or abs(r.voltage - round(volts, 2)) < 0.005)
 
     def set_current_limit(self, amps: float) -> None:
         _check_range("current limit", amps, self.limits.max_current, "A")
@@ -208,8 +224,16 @@ class IsoTechIPS:
         self._expect(command, lambda r: r.voltage_limit == volts)
 
     def set_power_limit(self, watts: int) -> None:
-        """Set the power limit. The user manual states that this can also change the current limit."""
+        """Set the power limit. The instrument then sets the current limit to P / U. This can increase it."""
         _check_integer("power limit", watts, self.limits.max_power, "W")
+        voltage_limit = self.read().voltage_limit
+        amps = watts / voltage_limit if voltage_limit else (0 if watts == 0 else float("inf"))
+        if amps > self.limits.max_current:
+            raise ValueError(
+                f"power limit {watts} W sets the current limit to {amps:.2f} A at the voltage limit "
+                f"{voltage_limit:g} V. This is above {self.limits.max_current:g} A. "
+                "Use a lower power limit, or increase the voltage limit first."
+            )
         command = f"SP {int(watts):03d}"
         self._t.write(command)
         self._expect(command, lambda r: r.power_limit == watts)
@@ -229,10 +253,12 @@ class IsoTechIPS:
 
     def measure(self) -> IPSMeasurement:
         r = self.read()
-        return IPSMeasurement(voltage=r.voltage, current=r.current, power=r.power)
+        return IPSMeasurement(voltage=r.voltage, current=r.current, power=r.power, output_enabled=r.output_enabled)
 
     def status(self) -> IPSStatus:
         r = self.read()
+        if not r.output_enabled:
+            self._voltage_setpoint = r.voltage
         return IPSStatus(
             model=self.model,
             output_enabled=r.output_enabled,

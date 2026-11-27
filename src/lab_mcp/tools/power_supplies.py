@@ -286,7 +286,8 @@ def ips_identify() -> DiscoveredInstrument:
 def ips_status() -> IPSStatus:
     """Read the output state, the remote mode, the limits and the limits of the model.
 
-    The instrument cannot report the voltage setpoint. voltage_setpoint is the last value that the server set.
+    While the output is on, the instrument cannot report the voltage setpoint.
+    Then voltage_setpoint is the last value that the server set.
     """
     with _guard(ips):
         return ips.device().status()
@@ -296,6 +297,7 @@ def ips_status() -> IPSStatus:
 def ips_measure() -> IPSMeasurement:
     """Measure the output voltage (V), current (A) and power (W).
 
+    While the output is off, the instrument reports the voltage setpoint, not 0 V.
     After you change a setpoint or the output, wait 1 s before you measure.
     """
     with _guard(ips):
@@ -307,6 +309,7 @@ def ips_set(voltage: IpsVolts | None = None, current: IpsAmps | None = None) -> 
     """Set the voltage (V), the current limit (A) or both. The output state does not change.
 
     The voltage must not be above the voltage limit (see ips_status). The instrument needs remote mode.
+    The instrument keeps P = U x I: a new current limit also changes the power limit.
     """
     with _guard(ips):
         dev = ips.device()
@@ -322,7 +325,9 @@ def ips_set_limits(voltage: IpsVoltageLimit | None = None, power: IpsPowerLimit 
     """Set the voltage limit (V), the power limit (W) or both. The instrument accepts only whole numbers.
 
     The voltage limit is the highest voltage setpoint that the instrument accepts.
-    The user manual states that a change of the power limit can also change the current limit.
+    The instrument keeps P = U x I. A new voltage limit changes the power limit.
+    CAUTION: a new power limit sets the current limit to P / U. This can increase the current limit.
+    Read current_limit in the result.
     """
     with _guard(ips):
         dev = ips.device()

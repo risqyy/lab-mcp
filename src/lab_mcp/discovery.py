@@ -47,8 +47,8 @@ SCAN_WORKERS = 128
 HCS_USB_IDS = {(0x10C4, 0xEA60)}  # Silicon Labs CP210x
 AFG_USB_IDS = {(0x2184, 0x001C)}  # GW Instek AFG-2105, USB CDC
 SERIAL_PROBE_TIMEOUT_S = 0.5
-# The IPS reply to "L" has 37 characters at 2400 baud (approximately 0.15 s).
-IPS_PROBE_TIMEOUT_S = 1.0
+# A real IPS-405 sends the reply to "L" after up to 0.8 s.
+IPS_PROBE_TIMEOUT_S = 2.0
 ISOTECH = "ISO-TECH"
 SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK", "SIGLENT", ISOTECH)
 

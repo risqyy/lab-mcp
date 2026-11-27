@@ -58,8 +58,28 @@ def test_set_voltage_and_current_limit_encoding(dev: IsoTechIPS, t: FakeIPSTrans
     assert (st.voltage_setpoint, st.current_limit) == (5.5, 1.25)
 
 
-def test_voltage_setpoint_is_unknown_before_first_set(dev: IsoTechIPS) -> None:
-    assert dev.status().voltage_setpoint is None
+def test_voltage_setpoint_is_read_while_output_is_off(t: FakeIPSTransport) -> None:
+    t.voltage = 7.5
+    assert IsoTechIPS(t, "IPS-405").status().voltage_setpoint == 7.5
+
+
+def test_voltage_setpoint_is_unknown_while_output_is_on_before_first_set(t: FakeIPSTransport) -> None:
+    t.output = True
+    assert IsoTechIPS(t, "IPS-405").status().voltage_setpoint is None
+
+
+def test_voltage_setpoint_is_examined_while_output_is_off(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    t.remote = False
+    with pytest.raises(RuntimeError, match="did not accept SV 03.30.*REM key"):
+        dev.set_voltage(3.3)
+
+
+def test_voltage_setpoint_is_not_examined_while_output_is_on(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    dev.set_output(True)
+    t.load_ohms = 1.0  # current limit active: the output voltage is lower than the setpoint
+    dev.set_current_limit(1.0)
+    dev.set_voltage(12.0)
+    assert dev.status().voltage_setpoint == 12.0
 
 
 @pytest.mark.parametrize(
@@ -80,6 +100,28 @@ def test_out_of_range_rejected_without_command(dev, t, method, value, message) -
     assert [c for c in t.commands if c != "L"] == [c for c in before if c != "L"]
 
 
+def test_power_limit_follows_voltage_and_current_limit(dev: IsoTechIPS) -> None:
+    dev.set_voltage_limit(12)
+    dev.set_current_limit(0.5)
+    assert dev.status().power_limit == 6
+    dev.set_voltage_limit(5)
+    assert dev.status().power_limit == 2  # 2.5 W, rounded down
+
+
+def test_power_limit_sets_current_limit(dev: IsoTechIPS) -> None:
+    dev.set_voltage_limit(5)
+    dev.set_current_limit(0.5)
+    dev.set_power_limit(10)
+    assert dev.status().current_limit == 2.0  # P / U: the current limit increases
+
+
+def test_power_limit_above_max_current_is_refused(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
+    dev.set_voltage_limit(12)
+    with pytest.raises(ValueError, match="current limit to 16.67 A"):
+        dev.set_power_limit(200)
+    assert not [c for c in t.commands if c.startswith("SP")]
+
+
 def test_voltage_above_voltage_limit_is_refused(t: FakeIPSTransport) -> None:
     dev = IsoTechIPS(FakeIPSTransport(voltage_limit=12), "IPS-405")
     with pytest.raises(ValueError, match="above the voltage limit 12 V"):
@@ -88,10 +130,10 @@ def test_voltage_above_voltage_limit_is_refused(t: FakeIPSTransport) -> None:
 
 def test_limits_encoding(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
     dev.set_voltage_limit(5)
-    dev.set_power_limit(50)
-    assert [c for c in t.commands if c.startswith("S")] == ["SU 05", "SP 050"]
+    dev.set_power_limit(20)
+    assert [c for c in t.commands if c.startswith("S")] == ["SU 05", "SP 020"]
     st = dev.status()
-    assert (st.voltage_limit, st.power_limit) == (5, 50)
+    assert (st.voltage_limit, st.power_limit, st.current_limit) == (5, 20, 4.0)
 
 
 def test_output_is_read_back(dev: IsoTechIPS, t: FakeIPSTransport) -> None:
