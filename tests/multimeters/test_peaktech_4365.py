@@ -86,6 +86,34 @@ def test_temperature_in_celsius_and_fahrenheit() -> None:
     assert (r.secondary["temperature_f"].value, r.secondary["temperature_f"].unit) == (72.6, "°F")
 
 
+@pytest.mark.parametrize(("name", "value", "status"), [
+    ("diode_good", 0.6175, "good"), ("diode_short", 0.0, "Shrt"), ("diode_open", None, "Open"),
+])
+def test_diode_real_states(name: str, value, status: str) -> None:
+    r = read(name)
+    assert (r.value, r.secondary["status"].display) == (value, status)
+
+
+def test_diode_number_in_status_line_is_ignored() -> None:
+    assert read("diode_number").secondary == {}
+
+
+@pytest.mark.parametrize(("name", "function", "value", "history"), [
+    ("resistance_shunt", "resistance", 0.1, [0.1, 0.1, 0.1]),
+    ("dc_v_10v", "dc_voltage", 9.988, [9.988, 9.987, 9.988]),
+    ("dc_a_2a", "dc_current", 1.998, [1.998, 1.999, 1.998]),
+    ("capacitance_100nf", "capacitance", 1.0081e-07, [1.0081e-07, 1.008e-07, 1.0085e-07]),
+    ("capacitance_10uf", "capacitance", 9.178e-06, [9.178e-06, 9.176e-06, 9.178e-06]),
+    ("resistance_10k", "resistance", 9954.0, [9953.0, 9954.0, 9953.0]),
+    ("resistance_1m", "resistance", 1008000.0, [1008000.0, 1008000.0, 1009000.0]),
+    ("hfe_bc547", "hfe", 255.9, [255.9, 255.8, 255.8]),
+    ("dc_ma", "dc_current", 0.0004725, [0.0004725, 0.0004725, 0.0004725]),
+])
+def test_real_measurements(name: str, function: str, value: float, history: list[float]) -> None:
+    r = read(name)
+    assert (r.function, r.value, r.history) == (function, value, history)
+
+
 def test_diode_status_text() -> None:
     r = read("diode_bad")
     assert (r.value, r.unit) == (0.0001, "V")
@@ -106,6 +134,13 @@ def test_functions(name: str, function: str, value: float, unit: str) -> None:
     assert math.isclose(r.value, value)
 
 
+def test_square_wave_frequency_and_ac_current() -> None:
+    f = read("frequency_square")
+    assert (f.value, f.secondary["ac_voltage"].value, f.secondary["level"].value) == (1201.0, 2.579, 10.45)
+    a = read("ac_ma_square")
+    assert (a.function, a.value, a.secondary["frequency"].value) == ("ac_current", 0.0002558, 150.0)
+
+
 def test_frequency_and_signal_output_secondary() -> None:
     assert read("frequency").secondary["ac_voltage"].value == 6.572
     assert read("signal_output").secondary["amplitude"].value == 0.216
@@ -114,7 +149,12 @@ def test_frequency_and_signal_output_secondary() -> None:
 def test_logic() -> None:
     r = read("logic")
     assert (r.function, r.value, r.display) == ("logic", None, "rdy")
-    assert r.secondary["value"].value == -0.001
+    assert (r.secondary["voltage"].value, r.secondary["voltage"].unit) == (-0.001, "V")
+
+
+def test_logic_with_square_wave() -> None:
+    r = read("logic_square")
+    assert (r.secondary["frequency"].value, r.secondary["voltage"].value) == (1200.0, 2.463)
 
 
 def test_unknown_unit_is_refused() -> None:

@@ -34,7 +34,7 @@ Read the [safety instructions](README.md#before-use) and the notes for your devi
 | ISO-TECH IPS-2010 | DC power supply with one output | RS-232 (no automatic discovery) | Yes | No                               |
 | Rigol DM3058E | Digital multimeter, 5½ digits     | USB-TMC (SCPI)        | Yes       | Partially (USB, firmware 01.01.00.02.03.01, open inputs and DC voltage) |
 | Rigol DM3058 | Digital multimeter, 5½ digits      | USB-TMC, LAN (SCPI)   | Yes       | No                                      |
-| PeakTech 4365 | Handheld digital multimeter (display read-out only) | RS-232 (no automatic discovery) | Yes | Partially (RS-232 with a PL2303 adapter, all switch positions without a signal) |
+| PeakTech 4365 | Handheld digital multimeter (display read-out only) | RS-232 (no automatic discovery) | Yes | Yes (RS-232 with a PL2303 adapter, all functions except S/O with a signal) |
 | GW Instek AFG-2105 | Function generator, 5 MHz   | USB virtual COM port (SCPI) | Yes | Protocol checks only (USB, firmware V2.02); output voltage and frequency not measured |
 | SIGLENT SDS1104X-E | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes | Partially (USB with WinUSB, firmware 8.3.6.1.37R17, open input and calibration signal on C1) |
 | Rigol DS4014 | Oscilloscope, four channels, 100 MHz | USB-TMC, LAN (SCPI) | Yes, without math and cursors | Partially (USB with NI-VISA, firmware 00.02.02.SP5, probe compensation signal on CH1) |
@@ -54,8 +54,16 @@ Measurements with components, current, and AC signals are not verified on the re
 Other models of the Manson HCS series use the same protocol. They can possibly operate, but they are not tested.
 
 The PeakTech 4365 support agrees with recorded replies of a real PeakTech 4365 for all positions and ranges of the rotary switch.
-The test used open inputs. Thus most resistance and capacitance replies were overloads.
-The values are not compared with a reference instrument.
+These measurements were compared with a reference:
+
+- DC voltage 1 V, 5 V and 10 V from an IPS-405: difference 1 mV to 12 mV.
+- DC current 0.5 A, 1 A and 2 A from an IPS-405 into a 0.1 Ω shunt: difference 2 mA or less. DC current 0.47 mA from a 5 V TTL output through 10 kΩ.
+- Resistance: 0.1 Ω shunt, 10 kΩ and 1 MΩ resistors (within the tolerance). Capacitance: 100 nF and 10 µF (within the tolerance).
+- Diode 1N4004 (617.5 mV, forward and reverse), short circuit and open test leads. hFE of a BC547 (256).
+- Frequency of a 5 V square wave from a USB-serial adapter (150 Hz to 9.6 kHz): difference 0.05 % or less.
+  AC voltage, AC current and logic with the same square wave.
+
+The signal output (S/O) is not tested with a signal.
 
 The ISO-TECH IPS support agrees with the IPS series user manual and with an existing command-line tool for these instruments.
 The IPS-405 is tested on RS-232: all tools without a load, constant-current operation with a 0.1 Ω shunt (0.5 A to 2 A),
@@ -256,12 +264,12 @@ The level is in dBm. hFE and the logic value have no unit.
 | Current DC (3 ranges)    | `dc_current`     | `history`                                                 |
 | Current AC (3 ranges)    | `ac_current`     | `frequency`                                               |
 | Resistance (6 ranges)    | `resistance`     | `history`                                                 |
-| Diode/continuity         | `diode`          | `status`: text, for example `Open` or `bAd`               |
+| Diode/continuity         | `diode`          | `status`: `Open`, `Shrt`, `good` or `bAd`                 |
 | Cap lo, Cap hi           | `capacitance`    | `history`                                                 |
 | Freq                     | `frequency`      | `ac_voltage`, `level` (dBm)                               |
 | Temp                     | `temperature`    | `temperature_f`                                           |
 | hFE                      | `hfe`            | `history`                                                 |
-| Logic                    | `logic`          | `frequency`, `value`. The main display is a text (`rdy`). |
+| Logic                    | `logic`          | `frequency`, `voltage` (mean voltage). The main display is always `rdy`. |
 | S/O                      | `signal_output`  | `amplitude` (V)                                           |
 
 `value` is `None` for an overload (`overload: true`), for a text, and while the display is not stable.
@@ -281,6 +289,11 @@ These items were found in a test with a PeakTech 4365:
 | Overload                            | `OL` with a decimal point (`.OL`, `O.L`, `OL.`), also with a sign (`-O.L dBm`). |
 | Range change, capacitance measurement | The value has no decimal point (for example `00000`). The server gives no value. |
 | Other program on the same port      | The port settings are common to all programs. A program that opens the port with other settings stops the communication. |
+| Settling                            | Some values need some seconds until they are stable (for example hFE and capacitance). Use `ptdmm_read_series` and examine the last values. |
+| Diode without good contact          | Line 3 contains a number that the display does not show. The server ignores it. |
+| AC voltage and AC current of a square wave | The multimeter shows approximately 8 % more than the RMS value of a 50 % square wave. The multimeter is possibly not true RMS. Do not use AC values of signals that are not sine waves. |
+| AC bandwidth                        | The AC voltage of a 5 V square wave decreases with the frequency (2.68 V at 150 Hz, 1.88 V at 9.6 kHz). |
+| Battery symbol                      | The reply does not contain the battery symbol or other display symbols. The server cannot detect a low battery. |
 
 ### Troubleshooting
 

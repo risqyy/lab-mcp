@@ -171,7 +171,8 @@ def ptdmm_read() -> PTReading:
     The server cannot change the function or the range: the user sets them with the rotary switch.
     Values are in SI units (V, A, Ohm, F, Hz). The temperature is in °C. value is None for an overload (OL),
     for a text (for example diode "Open") and while the display is not stable (range change, capacitance).
-    For AC functions, the multimeter needs up to 1 s for a reply.
+    For AC functions, the multimeter needs up to 1 s for a reply. Some values need some seconds until they
+    are stable (for example hFE and capacitance): then use ptdmm_read_series. The battery symbol is not reported.
     """
     with _guard(ptdmm):
         return ptdmm.device().read()

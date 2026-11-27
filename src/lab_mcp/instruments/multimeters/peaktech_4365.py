@@ -16,6 +16,12 @@ PeakTech 4365 and from an earlier read-out program for PeakTech multimeters:
   last 3 displayed values. The display moves them one line down each second.
 - The multimeter sends the reply after 0.1 s (DC) to 1 s (AC, frequency, capacitance).
   After a turn of the rotary switch, a reply can be incomplete.
+- For diode/continuity, line 3 shows the state of the diode (Open, Shrt, good, bAd). Without
+  a good contact of the test leads, the multimeter sends a number in line 3, which the
+  display does not show. The driver ignores this number.
+- For logic, line 1 always shows "rdy". Line 4 is the mean voltage of the input
+  without a unit (4.95 V for a 5 V high level, 2.46 V for a 50 % square wave).
+- The battery symbol and the other display symbols are not in the reply.
 - An overload shows as OL with a decimal point (.OL, O.L, OL.). During a range change
   or a capacitance measurement, the value has no decimal point (for example 00000).
   The driver reports no value for it.
@@ -60,6 +66,8 @@ _UNITS: dict[str, tuple[str, str]] = {
     "dBm": ("dBm", "1"),
 }
 # Functions with the last 3 displayed values in lines 2 to 4.
+# Display unit for a secondary value that the multimeter sends without a unit.
+_SECONDARY_UNIT_TEXT = {"voltage": "V"}
 _HISTORY_FUNCTIONS = {"dc_voltage", "dc_current", "resistance", "capacitance", "hfe"}
 # Names of the values in lines 3 and 4, for each function.
 _SECONDARY: dict[str, tuple[str | None, str | None]] = {
@@ -68,7 +76,7 @@ _SECONDARY: dict[str, tuple[str | None, str | None]] = {
     "frequency": ("ac_voltage", "level"),
     "temperature": ("temperature_f", None),
     "diode": ("status", None),
-    "logic": ("frequency", "value"),
+    "logic": ("frequency", "voltage"),
     "signal_output": ("amplitude", None),
 }
 
@@ -147,7 +155,8 @@ class PTReading(_Model):
     display: str
     overload: bool
     secondary: dict[str, PTValue] = Field(
-        description="Other values on the display, for example frequency and level (dBm) for AC voltage"
+        description="Other values on the display, for example frequency and level (dBm) for AC voltage, "
+        "status (Open, Shrt, good, bAd) for diode, frequency and mean voltage for logic"
     )
     history: list[float | None] = Field(
         description="Last 3 displayed values in unit, newest first (DC voltage, DC current, resistance, "
@@ -206,7 +215,10 @@ def parse_reply(lines: list[str]) -> PTReading:
     else:
         for name, line in zip(_SECONDARY.get(function, (None, None)), lines[2:]):
             if name is not None and line.strip():
-                secondary[name] = parse_line(line)[1]
+                item = parse_line(line, _SECONDARY_UNIT_TEXT.get(name, ""))[1]
+                if name == "status" and item.value is not None:
+                    continue  # a number that the display does not show
+                secondary[name] = item
     return PTReading(
         function=function, value=main.value, unit=main.unit, display=main.display, overload=main.overload,
         secondary=secondary, history=history, lines=list(lines),
