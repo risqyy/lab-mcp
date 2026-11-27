@@ -11,6 +11,9 @@ Discovery has three phases:
    Other serial ports are not used, because a probe sends data to the port.
 4. Configured ISO-TECH IPS ports get ``L``. An RS-232 port has no USB ID. Thus discovery
    uses only the ports and models that the user states (``ips_ports``).
+5. Configured PeakTech 4365 ports get CR. The multimeter is on an RS-232 port, often
+   with a common USB-serial bridge. Thus discovery uses only the ports that the user
+   states (``ptdmm_ports``).
 
 Discovery returns only instruments that answer.
 """
@@ -30,6 +33,7 @@ import pyvisa
 from pydantic import BaseModel, ConfigDict
 from serial.tools import list_ports
 
+from lab_mcp.instruments.multimeters.peaktech_4365 import PTSerialTransport, parse_reply
 from lab_mcp.instruments.power_supplies.isotech_ips import MODELS as IPS_MODELS
 from lab_mcp.instruments.power_supplies.isotech_ips import IPSSerialTransport, parse_status_line
 from lab_mcp.instruments.power_supplies.manson_hcs import SerialTransport
@@ -50,7 +54,9 @@ SERIAL_PROBE_TIMEOUT_S = 0.5
 # A real IPS-405 sends the reply to "L" after up to 0.8 s.
 IPS_PROBE_TIMEOUT_S = 2.0
 ISOTECH = "ISO-TECH"
-SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK", "SIGLENT", ISOTECH)
+PEAKTECH = "PEAKTECH"
+PEAKTECH_4365 = "4365"
+SUPPORTED_MANUFACTURERS = ("RIGOL", "MANSON", "GW INSTEK", "SIGLENT", ISOTECH, PEAKTECH)
 
 
 class DiscoveredInstrument(BaseModel):
@@ -84,6 +90,10 @@ class DiscoveredInstrument(BaseModel):
         return self.manufacturer.upper() == ISOTECH
 
     @property
+    def is_peaktech(self) -> bool:
+        return self.manufacturer.upper() == PEAKTECH
+
+    @property
     def is_supported(self) -> bool:
         return self.manufacturer.upper().startswith(SUPPORTED_MANUFACTURERS)
 
@@ -109,12 +119,14 @@ def discover(
     match: Callable[[DiscoveredInstrument], bool] = lambda inst: inst.is_supported,
     skip_serial_ports: Iterable[str] = (),
     ips_ports: Mapping[str, str] | None = None,
+    ptdmm_ports: Iterable[str] = (),
 ) -> list[DiscoveredInstrument]:
     """Find instruments with VISA, with a LAN scan if VISA finds none, and on serial ports.
 
     skip_serial_ports: ports that are open already. A second open of a serial port fails.
     ips_ports: RS-232 ports with an ISO-TECH IPS, as port -> model. Discovery sends data
     only to these ports, because the user stated them.
+    ptdmm_ports: RS-232 ports with a PeakTech 4365, as stated by the user.
     """
     found: dict[str, DiscoveredInstrument] = {}  # keyed by serial number to merge USB/LAN duplicates
     seen_hosts: set[str] = set()
@@ -144,6 +156,13 @@ def discover(
         if device.upper() in skip:
             continue
         inst = identify_ips(device, model)
+        if inst is not None and match(inst):
+            found.setdefault(inst.serial, inst)
+
+    for device in ptdmm_ports:
+        if device.upper() in skip:
+            continue
+        inst = identify_ptdmm(device)
         if inst is not None and match(inst):
             found.setdefault(inst.serial, inst)
 
@@ -245,6 +264,28 @@ def identify_ips(device: str, model: str) -> DiscoveredInstrument | None:
         transport.close()
     return DiscoveredInstrument(
         address=device, backend="serial", manufacturer=ISOTECH, model=model, serial=device, firmware="",
+    )
+
+
+def identify_ptdmm(device: str) -> DiscoveredInstrument | None:
+    """Send CR to a serial port that the user stated. Return the multimeter, or None if no PeakTech 4365 answers.
+
+    The protocol has no identification and no serial number. Thus the port is the serial number.
+    """
+    try:
+        transport = PTSerialTransport.open(device)
+    except OSError as exc:
+        log.debug("Cannot open %s: %s", device, exc)
+        return None
+    try:
+        parse_reply(transport.query())
+    except OSError as exc:  # includes TimeoutError and PTProtocolError
+        log.debug("No PeakTech reply on %s: %s", device, exc)
+        return None
+    finally:
+        transport.close()
+    return DiscoveredInstrument(
+        address=device, backend="serial", manufacturer=PEAKTECH, model=PEAKTECH_4365, serial=device, firmware="",
     )
 
 
